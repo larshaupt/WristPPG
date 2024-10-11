@@ -18,6 +18,8 @@ class BluetoothIMUReader:
         self.saving_time = 0
         self.init_connection()
         self.packages = [-1]
+        self.data_losses = []
+        self.current_package = -1
 
     def init_connection(self):
         """Initialize the Bluetooth serial connection."""
@@ -69,13 +71,19 @@ class BluetoothIMUReader:
             self.received_data = []  # Clear the buffer after saving
 
     def update(self):
-        data = self.read_data()
+        try:
+            data = self.read_data()
+        except Exception as e:
+            print(f"Error reading data: {e}")
+            return
         
         if isinstance(data, int):
             package = data
             print(f"Package count: {package}")
             if package != self.packages[-1]:
                 self.packages.append(package)
+            if self.current_package != package:
+                self.current_package = package
         
         elif data is not None:
             acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer = data
@@ -96,6 +104,7 @@ class BluetoothIMUReader:
         # Save the data periodically based on the save interval
         current_time = time.time() * 1000
         if current_time - self.saving_time >= self.save_interval and len(self.received_data) > 0:
+            self.data_losses.append(self.get_data_loss_package())
             self.save_data()
             self.saving_time = current_time
             
@@ -103,15 +112,25 @@ class BluetoothIMUReader:
         package_count = np.array(self.packages[1:])
         package_count = np.unique(package_count)
         package_count.sort()
-        package_loss = np.diff(package_count)
+        package_diff = np.diff(package_count)
+        package_loss = package_diff[package_diff > 1]
+        #print(package_loss)
         package_loss = np.sum(package_loss - 1)
-        return (package_loss + len(package_count)) / len(package_count)
+        return package_loss / (len(package_count) + package_loss)
         
-    def get_data_loss(self):
-        sample_packages = np.array([data["package"] for data in self.received_data if data["package"] != -1 and data["package"] != self.packages[-1]])
+    def get_data_loss_package(self):
+        # explude first and last package
+        sample_packages = np.array([data["package"] for data in self.received_data if data["package"] != self.received_data[0]["package"]])
+        if len(sample_packages) == 0:
+            return np.nan
         unique_packages = np.unique(sample_packages)
-        data_loss = (unique_packages*SAMPLES_PER_PACKAGE - len(sample_packages)) / (unique_packages*SAMPLES_PER_PACKAGE)
+        data_loss = (len(unique_packages)*SAMPLES_PER_PACKAGE - len(sample_packages)) / (len(unique_packages)*SAMPLES_PER_PACKAGE)
         return data_loss
+
+    def get_data_loss(self):
+        self.data_losses = np.array(self.data_losses)
+        self.data_losses = self.data_losses[~np.isnan(self.data_losses)]
+        return np.nanmean(self.data_losses)
 
     def run(self):
         try:
