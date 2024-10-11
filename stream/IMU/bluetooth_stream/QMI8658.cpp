@@ -583,9 +583,9 @@ unsigned char QMI8658_init(void)
 	QMI8658_write_reg(QMI8658Register_Ctrl1, 0x60);
 	QMI8658_config.inputSelection = QMI8658_CONFIG_ACCGYR_ENABLE; // QMI8658_CONFIG_ACCGYR_ENABLE;
 	QMI8658_config.accRange = QMI8658AccRange_2g;
-	QMI8658_config.accOdr = QMI8658AccOdr_250Hz;
+	QMI8658_config.accOdr = QMI8658AccOdr_125Hz;
 	QMI8658_config.gyrRange = QMI8658GyrRange_512dps; // QMI8658GyrRange_2048dps   QMI8658GyrRange_1024dps
-	QMI8658_config.gyrOdr = QMI8658GyrOdr_250Hz;
+	QMI8658_config.gyrOdr = QMI8658GyrOdr_125Hz;
 	QMI8658_config.magOdr = QMI8658MagOdr_125Hz;
 	QMI8658_config.magDev = MagDev_AKM09918;
 	QMI8658_config.aeOdr = QMI8658AeOdr_128Hz;
@@ -671,26 +671,18 @@ void QMI8658_read_fifo_data(short acc_fifo[][3], short gyro_fifo[][3], unsigned 
         QMI8658_read_reg(QMI8658Register_FifoData, buf, 12);
         
         // Parse accelerometer data
-        short raw_acc_xyz[3];
-        raw_acc_xyz[0] = (short)((buf[1] << 8) | buf[0]);
-        raw_acc_xyz[1] = (short)((buf[3] << 8) | buf[2]);
-        raw_acc_xyz[2] = (short)((buf[5] << 8) | buf[4]);
-
-        acc_fifo[i][0] = raw_acc_xyz[0];
-        acc_fifo[i][1] = raw_acc_xyz[1];
-        acc_fifo[i][2] = raw_acc_xyz[2];
+        acc_fifo[i][0] = (short)((buf[1] << 8) | buf[0]);
+        acc_fifo[i][1] = (short)((buf[3] << 8) | buf[2]);
+        acc_fifo[i][2] = (short)((buf[5] << 8) | buf[4]);
 
         // Parse gyroscope data
-        short raw_gyro_xyz[3];
-        raw_gyro_xyz[0] = (short)((buf[7] << 8) | buf[6]);
-        raw_gyro_xyz[1] = (short)((buf[9] << 8) | buf[8]);
-        raw_gyro_xyz[2] = (short)((buf[11] << 8) | buf[10]);
+        gyro_fifo[i][0] = (short)((buf[7] << 8) | buf[6]);
+        gyro_fifo[i][1] = (short)((buf[9] << 8) | buf[8]);
+        gyro_fifo[i][2] = (short)((buf[11] << 8) | buf[10]);
 
-        gyro_fifo[i][0] = raw_gyro_xyz[0];
-        gyro_fifo[i][1] = raw_gyro_xyz[1];
-        gyro_fifo[i][2] = raw_gyro_xyz[2];
     }
     QMI8658_set_fifo_write_mode();
+
 }
 
 

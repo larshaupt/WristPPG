@@ -11,18 +11,23 @@
 #define SENSOR_CHARACTERISTIC_UUID "12345678-1234-1234-1234-123456789013"
 
 // Sampling parameters
-#define SAMPLE_INTERVAL 2   // Sampling interval in milliseconds
+#define FIFO_SIZE 8
 #define SAMPLES_PER_PACKAGE 32 // Number of samples to send in one package
-#define SAMPLING_RATE 224.2//896.8
-#define PIN_FOR_INTERRUPT 47
+#define SAMPLING_RATE 112.1//224.2//896.8
 
-short acc_fifo[SAMPLES_PER_PACKAGE][3];
-short gyro_fifo[SAMPLES_PER_PACKAGE][3];
-short sensorData[SAMPLES_PER_PACKAGE][6]; // Array to hold the last SAMPLES_PER_PACKAGE samples (8 shorts per sample)
+short acc_fifo[FIFO_SIZE][3];
+short gyro_fifo[FIFO_SIZE][3];
+//short sensorData[SAMPLES_PER_PACKAGE][6]; // Array to hold the last SAMPLES_PER_PACKAGE samples (8 shorts per sample)
+
+// Prepare the byte array to send (SAMPLES_PER_PACKAGE samples * 6 shorts + 6 timestamps)
+uint8_t sendData[SAMPLES_PER_PACKAGE * (6 * 2 ) + 6 * SAMPLES_PER_PACKAGE/FIFO_SIZE ]; // Each sample has 6 16-bit (2-byte) values + 3 bytes for the timestamp
+unsigned short sendDataIndex = 0;
 
 unsigned short packageCount = 0;
+unsigned char packageCountFifo = 0;
 BLECharacteristic *pSensorCharacteristic;
 bool deviceConnected = false;
+unsigned char delay_time = (unsigned char)FIFO_SIZE/SAMPLING_RATE*1000*0.8;
 //void IRAM_ATTR fifo_watermark_interrupt();
 
 
@@ -42,12 +47,12 @@ class MyServerCallbacks: public BLEServerCallbacks {
 
 void setup() {
     Serial.begin(115200);
-
     // Initialize QMI8658 IMU
     Wire.begin(6, 7);
+    Wire.setClock(400000); // Set I2C clock to 400 kHz
     QMI8658_init();
-    // Configure FIFO in Stream Mode with 32 samples
-    QMI8658_config_fifo(0x02, 0b01);
+    // Configure FIFO in Stream Mode with 64 samples
+    QMI8658_config_fifo(0x01, 0b00);
     Serial.println("FIFO configured in stream mode.");
     Serial.println("QMI8658 initialized");
 
@@ -87,85 +92,87 @@ void setup() {
     delay(2000);
 }
 
-void loop()
-{
-
-if (QMI8658_fifo_full()) {
-    read_fifo();
-    delay(100);
+void loop() {
+// only sample signal if connected to bluetooth
+if (deviceConnected) {
+  unsigned short fifo_count = QMI8658_fifo_count();
+  if (fifo_count/6 >= FIFO_SIZE) {
+      read_fifo();
+      delay(delay_time);
+    }
+  } else {
+  // sleep for 2 second to save energy
+  delay(2000);
   }
-
 }
 
 void read_fifo() {
   //Serial.println("Reading FIFO package...");
 
-  unsigned char num_samples = SAMPLES_PER_PACKAGE; // Number of samples to read from FIFO
+  unsigned char num_samples = FIFO_SIZE; // Number of samples to read from FIFO
   // Read accelerometer and gyroscope data
   QMI8658_read_fifo_data(acc_fifo, gyro_fifo, num_samples);
   uint32_t timestamp = (uint32_t)(esp_timer_get_time()/1000);
   //Serial.print("Timestamp: ");
   //Serial.println(timestamp);
-  // store samples in sensorData array
-  int sampleCount = 0;     // Counter for the number of samples collected
-  for (unsigned char i = 0; i < num_samples; i++) {
-    sensorData[sampleCount][0] = acc_fifo[i][0];
-    sensorData[sampleCount][1] = acc_fifo[i][1];
-    sensorData[sampleCount][2] = acc_fifo[i][2];
-    sensorData[sampleCount][3] = gyro_fifo[i][0];
-    sensorData[sampleCount][4] = gyro_fifo[i][1];
-    sensorData[sampleCount][5] = gyro_fifo[i][2];
-    sampleCount++;
+
+  // print data
+  //for (unsigned short i = 0; i < FIFO_SIZE; i++) {
+  //  Serial.print(packageCount);
+  //  Serial.print("\t");
+  //  Serial.print(acc_fifo[i][0]);
+  //  Serial.print("\t");
+  //  Serial.print(acc_fifo[i][1]);
+  //  Serial.print("\t");
+  //  Serial.print(acc_fifo[i][2]);
+  //  Serial.print("\t");
+  //  Serial.print(gyro_fifo[i][0]);
+  //  Serial.print("\t");
+  //  Serial.print(gyro_fifo[i][1]);
+  //  Serial.print("\t");
+  //  Serial.println(gyro_fifo[i][2]);
+  //}
+  //Serial.print("");
+
+  // Copy timestamp (24 bits)
+  // Secnding extra 0xFF to preceed the timestamp
+  sendData[sendDataIndex++] = (uint8_t)(packageCount & 0xFF);
+  sendData[sendDataIndex++] = (uint8_t)((packageCount >> 8) & 0xFF); 
+  sendData[sendDataIndex++] = (uint8_t)((timestamp >> 16) & 0xFF); // High byte
+  sendData[sendDataIndex++] = (uint8_t)((timestamp >> 8) & 0xFF);      // Middle byte
+  sendData[sendDataIndex++] = (uint8_t)(timestamp & 0xFF);      // Low byte
+
+  for (unsigned char i = 0; i < FIFO_SIZE; i++) {
+      // Copy accelerometer and gyroscope data
+      for (unsigned char j = 0; j < 3; j++) {
+          sendData[sendDataIndex++] = (acc_fifo[i][j] >> 8) & 0xFF; // High byte
+          sendData[sendDataIndex++] = acc_fifo[i][j] & 0xFF;        // Low byte
+      }
+      for (unsigned char j = 0; j < 3; j++) {
+          sendData[sendDataIndex++] = (gyro_fifo[i][j] >> 8) & 0xFF; // High byte
+          sendData[sendDataIndex++] = gyro_fifo[i][j] & 0xFF;        // Low byte
+      }
   }
-
-   // print data
-/*   for (unsigned char i = 0; i < num_samples; i++) {
-    Serial.print(sensorData[i][0]);
-    Serial.print("\t");
-    Serial.print(sensorData[i][1]);
-    Serial.print("\t");
-    Serial.print(sensorData[i][2]);
-    Serial.print("\t");
-    Serial.print(sensorData[i][3]);
-    Serial.print("\t");
-    Serial.print(sensorData[i][4]);
-    Serial.print("\t");
-    Serial.print(sensorData[i][5]);
-    Serial.print("\t");
-    Serial.println(timestamp);
-  }   */
-
-  if (deviceConnected) {       
-    
-    // Prepare the byte array to send (SAMPLES_PER_PACKAGE samples * 6 shorts + 6 timestamps)
-    uint8_t sendData[SAMPLES_PER_PACKAGE * (6 * 2 ) + 6]; // Each sample has 6 16-bit (2-byte) values + 3 bytes for the timestamp
-
-    unsigned short index = 0;
-
-      // Copy timestamp (24 bits)
-      // Secnding extra 0xFF to preceed the timestamp
-      sendData[index++] = (uint8_t)(packageCount & 0xFF);
-      sendData[index++] = (uint8_t)((packageCount >> 8) & 0xFF); 
-      sendData[index++] = (uint8_t)((timestamp >> 16) & 0xFF); // High byte
-      sendData[index++] = (uint8_t)((timestamp >> 8) & 0xFF);      // Middle byte
-      sendData[index++] = (uint8_t)(timestamp & 0xFF);      // Low byte
-
-    for (unsigned char i = 0; i < SAMPLES_PER_PACKAGE; i++) {
-        // Copy accelerometer and gyroscope data
-        for (unsigned char j = 0; j < 6; j++) {
-            sendData[index++] = (sensorData[i][j] >> 8) & 0xFF; // High byte
-            sendData[index++] = sensorData[i][j] & 0xFF;        // Low byte
-        }
-    }
+  sendData[sendDataIndex++] = 0xFF;
+  packageCountFifo++;
+  
+  if (packageCountFifo >= SAMPLES_PER_PACKAGE/FIFO_SIZE) {   
+    // send out data
     // extra suffix
-    sendData[index++] = 0xFF;
+    
 
     //Serial.print("Sending Package...");
     // Send the combined data
-    pSensorCharacteristic->setValue(sendData, sizeof(sendData));
-    pSensorCharacteristic->notify();  // Notify the client
+    if (deviceConnected) {
+      pSensorCharacteristic->setValue(sendData, sizeof(sendData));
+      pSensorCharacteristic->notify();  // Notify the client
+    }
+    packageCountFifo = 0;
+    sendDataIndex = 0;
+    
   }
   // always increment the package count
   packageCount++;
+  
 }
   
