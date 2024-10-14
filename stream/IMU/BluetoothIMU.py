@@ -143,16 +143,13 @@ class BluetoothIMUReader:
 
     def send_signal(self,signal):
         try:
-            # Wait a bit to make sure the connection is ready
-            time.sleep(2)
 
             # Send the start/stop signal
             self.ser.write(signal.encode())  # Sending the signal as bytes
-            print(f"Signal '{signal}' sent.")
+            print(f"[IMU] Signal '{signal}' sent.")
         except Exception as e:
-            print(f"Failed to send signal: {e}")
-        finally:
-            self.ser.close()
+            print(f"[IMU] Failed to send signal: {e}")
+
 
     def init_connection(self):
         """Initialize the Bluetooth serial connection."""
@@ -280,9 +277,15 @@ class BluetoothIMUReader:
         if self.running:
             print("Stopping data reading thread...")
             self.running = False
-            if self.thread is not None:
-                self.thread.join()  # Wait for the thread to finish
-                print("[IMU]: Data reading thread stopped.")
+            for thread in self.threads:
+                thread.join()
+            print("[IMU]: Data reading thread stopped.")
+            
+            
+                
+        self.end_run()
+
+        
             
     def get_package_loss(self):
         package_count = np.array(self.packages[1:])
@@ -310,20 +313,13 @@ class BluetoothIMUReader:
     
     def end_run(self):
         """Stops the run loop, saves the data, and closes the serial connection."""
+        self.send_signal('E')
         self.running = False  # Stop the reading loop
-        self.save_data()  # Save any remaining data
         self.ser.close()  # Close the serial port
         print(f"[IMU]: Package loss: {self.get_package_loss()*100:.2f} %")
         print(f"[IMU]: Data loss: {self.get_data_loss()*100:.2f} %")
-        print(f"[IMU]: Data saved to {self.save_file}")
+        print(f"[IMU]: Data saved to {self.data_buffer.filename}.txt")
     
-    def stop_threads(self):
-        self.save_data()  # Save any remaining data
-        self.ser.close()  # Close the serial port
-        print(f"[IMU]: Package loss: {self.get_package_loss()*100:.2f} %")
-        print(f"[IMU]: Data loss: {self.get_data_loss()*100:.2f} %")
-        print(f"[IMU]: Data saved to {self.save_file}")
-
 
 
 

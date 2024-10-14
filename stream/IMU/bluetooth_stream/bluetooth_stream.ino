@@ -117,7 +117,7 @@ if (deviceConnected) {
     }
   } else {
   // sleep for 2 second to save energy
-  esp_deep_sleep(2000000);
+  delay(2000);
   }
 }
 

@@ -23,7 +23,7 @@ bool recording = false;
 unsigned short lastPackageCount = 0;
 unsigned short num_packages = SAMPLES_PER_PACKAGE / FIFO_SIZE;
 unsigned short delay_time = (unsigned short)FIFO_SIZE / SAMPLING_FREQUENCY * 1000 * 0.8;
-
+void startRecording();
 
 
 void setup() {
@@ -35,6 +35,7 @@ void setup() {
 
     // Create a BLE client
     pClient = BLEDevice::createClient();
+    
 
     // Set scan parameters
     pBLEScan = BLEDevice::getScan();  // Create new scan
@@ -48,23 +49,27 @@ void setup() {
 
 void loop() {
 // Check if data is available on the serial port
-    if (Serial.available() > 0) {
-        char receivedChar = Serial.read();
-        
-        if (receivedChar == 'S') {  // If the received signal is 'S'
-            Serial.println("Start recording signal received.");
-            recording = true;
-        }
-        else if (receivedChar == 'E') {
-            Serial.println("End recording signal received.");
-            recording = false;
-        }
-    }
-    if (recording) {
-      startRecording();
-    } else {
-      esp_deep_sleep(1000000);
-    }
+
+  if (Serial.available() > 0) {
+      delay(1000);
+      //Serial.println("Waiting 1s");
+      char receivedChar = Serial.read();
+      
+      if (receivedChar == 'S') {  // If the received signal is 'S'
+          Serial.println("Start recording signal received.");
+          recording = true;
+      } else if (receivedChar == 'E') {
+        Serial.println("End recording signal received.");
+        recording = false;
+        delay(1000);
+      }
+  }
+  
+  if (recording) {
+  startRecording();
+  } 
+  
+
 }
 
 
