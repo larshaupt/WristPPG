@@ -14,6 +14,7 @@
 #define FIFO_SIZE 8
 #define SAMPLES_PER_PACKAGE 32 // Number of samples to send in one package
 #define SAMPLING_RATE 112.1//224.2//896.8
+#define BATTERY_VOLTAGE_PIN 1 
 
 short acc_fifo[FIFO_SIZE][3];
 short gyro_fifo[FIFO_SIZE][3];
@@ -45,6 +46,15 @@ class MyServerCallbacks: public BLEServerCallbacks {
   }
 };
 
+float readBatteryVoltage() {
+    // Read the raw ADC value
+    int rawValue = analogRead(BATTERY_VOLTAGE_PIN);
+    
+    // Convert to voltage (assuming a 3.3V reference and a voltage divider)
+    float voltage = (rawValue / 4095.0) * 3.3; // Convert ADC value to voltage
+    return voltage;
+}
+
 void setup() {
     Serial.begin(115200);
     // Initialize QMI8658 IMU
@@ -55,6 +65,11 @@ void setup() {
     QMI8658_config_fifo(0x01, 0b00);
     Serial.println("FIFO configured in stream mode.");
     Serial.println("QMI8658 initialized");
+
+    // Read battery voltage
+    float batteryVoltage = readBatteryVoltage();
+    Serial.print("Battery Voltage: ");
+    Serial.println(batteryVoltage);
 
     // Attach interrupt to the watermark
     //QMI8658_write_reg(QMI8658Register_Ctrl7, (1<<7)); // ENABLE SyncSample Mode
@@ -102,7 +117,7 @@ if (deviceConnected) {
     }
   } else {
   // sleep for 2 second to save energy
-  delay(2000);
+  esp_deep_sleep(2000000);
   }
 }
 

@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Wire.h>
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEScan.h>
@@ -12,15 +13,18 @@
 #define CHARACTERISTIC_UUID "12345678-1234-1234-1234-123456789013"  // Replace with your characteristic UUID
 #define SAMPLES_PER_PACKAGE 32
 #define FIFO_SIZE 8
-#define SAMPLING_FREQUENCY 112.1//224.2  //112.1 //224.2
+#define SAMPLING_FREQUENCY 112.1  //112.1 //224.2
 
 BLEClient* pClient;
 BLEScan* pBLEScan;
 bool deviceConnected = false;
 bool foundTargetDevice = false;
+bool recording = false;
 unsigned short lastPackageCount = 0;
-unsigned short num_packages = SAMPLES_PER_PACKAGE/FIFO_SIZE;
-unsigned short delay_time = (unsigned short)FIFO_SIZE/SAMPLING_FREQUENCY*1000*0.8;
+unsigned short num_packages = SAMPLES_PER_PACKAGE / FIFO_SIZE;
+unsigned short delay_time = (unsigned short)FIFO_SIZE / SAMPLING_FREQUENCY * 1000 * 0.8;
+
+
 
 void setup() {
     Serial.begin(115200);
@@ -37,9 +41,34 @@ void setup() {
     pBLEScan->setInterval(100);
     pBLEScan->setWindow(99);
     pBLEScan->setActiveScan(true);  // Active scan to gather more data
+
+    // Initialize I2C communication
+    Wire.begin(0x08);  // ESP32 I2C address
 }
 
 void loop() {
+// Check if data is available on the serial port
+    if (Serial.available() > 0) {
+        char receivedChar = Serial.read();
+        
+        if (receivedChar == 'S') {  // If the received signal is 'S'
+            Serial.println("Start recording signal received.");
+            recording = true;
+        }
+        else if (receivedChar == 'E') {
+            Serial.println("End recording signal received.");
+            recording = false;
+        }
+    }
+    if (recording) {
+      startRecording();
+    } else {
+      esp_deep_sleep(1000000);
+    }
+}
+
+
+void startRecording() {
     if (!deviceConnected && !foundTargetDevice) {
         // Start scanning
         Serial.println("Scanning for BLE devices...");
@@ -73,6 +102,7 @@ void loop() {
             Serial.println("Target device not found. Rescanning...");
         }
     }
+
 
     // If connected, read data from the BLE characteristic
     if (deviceConnected) {
@@ -147,3 +177,4 @@ void loop() {
         }
     }
 }
+
