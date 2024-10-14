@@ -4,8 +4,10 @@ from matplotlib.animation import FuncAnimation
 import time
 import csv
 import numpy as np
+import os
 
-SAMPLES_PER_PACKAGE = 32
+SAMPLES_PER_PACKAGE = 8
+data_path = r"C:\Users\lhauptmann\Code\WristPPG2\data"
 
 class BluetoothIMUReader:
     def __init__(self, port, baud_rate, save_file="data.csv", save_interval=1000):
@@ -70,6 +72,8 @@ class BluetoothIMUReader:
                     writer.writerow(data)
             self.received_data = []  # Clear the buffer after saving
 
+            
+
     def update(self):
         try:
             data = self.read_data()
@@ -105,6 +109,7 @@ class BluetoothIMUReader:
         current_time = time.time() * 1000
         if current_time - self.saving_time >= self.save_interval and len(self.received_data) > 0:
             self.data_losses.append(self.get_data_loss_package())
+            
             self.save_data()
             self.saving_time = current_time
             
@@ -141,6 +146,7 @@ class BluetoothIMUReader:
         finally:
             print(f"Package loss: {self.get_package_loss()}")
             print(f"Data loss: {self.get_data_loss()}")
+            print(f"Data saved to {self.save_file}")
             self.ser.close()  # Close the serial port
 
 # Example usage
@@ -150,7 +156,8 @@ if __name__ == "__main__":
     baud_rate = 115200  # The same baud rate as in Arduino code
 
     # Initialize the Bluetooth IMU reader
-    imu_reader = BluetoothIMUReader(bluetooth_port, baud_rate)
+    filename = "imu_", time.strftime("%m_%d-%H_%M") + ".csv"
+    imu_reader = BluetoothIMUReader(bluetooth_port, baud_rate, save_file=os.path.join(data_path, filename))
 
     # Run the reader (press Ctrl+C to stop)
     imu_reader.run()

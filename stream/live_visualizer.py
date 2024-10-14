@@ -1,4 +1,5 @@
 from PPG.wristband_listener import *
+from IMU.BluetoothIMU import BluetoothIMUReader
 
 import multiprocessing
 import threading
@@ -45,9 +46,9 @@ class LiveFigure:
             rows=8, cols=6,
             specs= [[{"secondary_y": True, "colspan":2}, None, {"secondary_y": True, "colspan":2}, None, None, None],
                     [{"secondary_y": True, "colspan":2}, None, {"secondary_y": True, "colspan":2}, None, None, None],
+                    [{"secondary_y": True, "colspan":2}, None, {"secondary_y": True, "colspan":2}, None, {"rowspan": 2, "colspan":2}, None],
                     [{"secondary_y": True, "colspan":2}, None, {"secondary_y": True, "colspan":2}, None, None, None],
-                    [{"secondary_y": True, "colspan":2}, None, {"secondary_y": True, "colspan":2}, None, None, None],
-                    [{"secondary_y": True, "colspan":2}, None, {"secondary_y": True, "colspan":2}, None, None, None],
+                    [{"secondary_y": True, "colspan":2}, None, {"secondary_y": True, "colspan":2}, None, {"rowspan": 2, "colspan":2}, None],
                     [{"secondary_y": True, "colspan":2}, None, {"secondary_y": True, "colspan":2}, None, None, None],
                     [{"secondary_y": True, "colspan":2}, None, {"secondary_y": True, "colspan":2}, None, {"rowspan": 2, "colspan":2}, None],
                     [{"secondary_y": True, "colspan":2}, None, {"secondary_y": True, "colspan":2}, None, None , None],
@@ -61,26 +62,37 @@ class LiveFigure:
 
         # ppgs
         for ch in range(8): # green
-            self.fig.add_trace(go.Scatter(x=np.arange(self.wlen), y=[0], name=f"channel_{ch+1}", line=dict(color='black')), 
+            self.fig.add_trace(go.Scatter(x=np.arange(self.wlen), y=[0], name=f"channel_{ch+1}", line=dict(color='black'), showlegend=False), 
                             row=ch+1, col=1, secondary_y=False)
             self.fig.update_yaxes(title_text=f"ch {ch+1}", row=ch+1, col=1, title_standoff=0)
 
         for ch in range(8): # IR
-            self.fig.add_trace(go.Scatter(x=np.arange(self.wlen), y=[0], name=f"channel_{ch+1}", line=dict(color='black')), 
+            self.fig.add_trace(go.Scatter(x=np.arange(self.wlen), y=[0], name=f"channel_{ch+1}", line=dict(color='black'), showlegend=False), 
                                 row=ch+1, col=3, secondary_y=False)
             self.fig.update_yaxes(title_text=f"ch {ch+1}", row=ch+1, col=3, title_standoff=0)
 
-        self.fig.update_layout(showlegend=False, yaxis=dict(autorangeoptions=dict(clipmax=1e6)))
+        self.fig.update_layout(yaxis=dict(autorangeoptions=dict(clipmax=1e6)))
 
         self.mins = [0 for _ in range(16)]
         self.maxs = [1e5 for _ in range(16)]
         self.alpha = 0.9
 
         ## accelerometer
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # Example: blue, orange, green for x,y,z
         acc_axes = ['x', 'y', 'z']
         for i in range(3):
-            self.fig.add_trace(go.Scatter(x=np.arange(self.wlen), y=[0], mode='lines', name=acc_axes[i]), row=7, col=5)
-        self.fig.update_yaxes(title_text=f"accelerometer", row=7, col=5)
+            self.fig.add_trace(go.Scatter(x=np.arange(self.wlen), y=[0], mode='lines', name=acc_axes[i],showlegend=True, line=dict(color=colors[i])), row=3, col=5)
+        self.fig.update_yaxes(title_text=f"PPG Accelerometer", row=3, col=5, range=([-20, 20]))
+        
+        acc_axes = ['x', 'y', 'z']
+        for i in range(3):
+            self.fig.add_trace(go.Scatter(x=np.arange(self.wlen), y=[0], mode='lines', name=acc_axes[i], showlegend=False,line=dict(color=colors[i])), row=5, col=5)
+        self.fig.update_yaxes(title_text=f"IMU Accelerometer", row=5, col=5, range=([-20, 20]))
+        
+        acc_axes = ['x', 'y', 'z']
+        for i in range(3):
+            self.fig.add_trace(go.Scatter(x=np.arange(self.wlen), y=[0], mode='lines', name=acc_axes[i], showlegend=False,line=dict(color=colors[i])), row=7, col=5)
+        self.fig.update_yaxes(title_text=f"IMU Gyroscope", row=7, col=5, range = [-512, 512])
 
     def _update_ppg_plots(self, input_data):
         # update the y axes maxs and mins
@@ -97,9 +109,30 @@ class LiveFigure:
             self.fig.update_yaxes(row=ch+1, col=1, range=[self.mins[ch], self.maxs[ch]])
             self.fig.update_yaxes(row=ch+1, col=3, range=[self.mins[ch+8], self.maxs[ch+8]])
 
-    def _update_imu_plots(self, input_data):
-        for ch in range(3):
-            self.fig['data'][ch+16]['y'] = np.array(input_data[ch])
+    def _update_ppg_imu_plots(self, input_data):
+        # Ensure input_data has data for accelerometer and gyroscope
+        if input_data is not None:
+            for ch in range(3):  # Assuming input_data[16:19] are accelerometer values
+                self.fig['data'][ch + 16]['y'] = np.array(input_data[16+ch])  # Accelerometer
+            #self.fig.update_yaxes(row=3, col=5, range=[-20, 20])
+
+    def update_imu_plots(self, input_data):
+        #print(len(input_data[0]))
+        # Ensure input_data has data for accelerometer and gyroscope
+        if input_data is not None:
+            
+            # Update IMU accelerometer plots
+            for ch in range(3):  # x, y, z axes
+                self.fig['data'][ch+19]['y'] = np.array(input_data[ch]) 
+            #self.fig.update_yaxes(row=5, col=5, range=[-20, 20])
+            
+            # Update PPG gyroscope plots
+            for ch in range(3):  # x, y, z axes
+                self.fig['data'][ch+22]['y'] = np.array(input_data[3+ch])  
+            #self.fig.update_yaxes(row=7, col=5, range=[-512, 512])
+            
+            # You can similarly add more plots if needed, e.g., for IMU gyroscope data
+
 
     def _scale_ppg(self, input_data):
         # min max scale
@@ -108,11 +141,12 @@ class LiveFigure:
         scaled_data += [(input_data[i] - ppg_min[i]) / ppg_scale[i] for i in range(8, 16)]
         return scaled_data
 
-    def update_plots(self, input_data):
-        filtered_ppg = [filter_ppg(input_data[i]) for i in range(16)] 
+    def update_ppg_plots(self, input_data_ppg, input_data_imu = None):
+        filtered_ppg = [filter_ppg(input_data_ppg[i]) for i in range(16)] 
         filtered_ppg = self._scale_ppg(filtered_ppg)
-        self._update_ppg_plots(input_data)
-        self._update_imu_plots(input_data[16:])
+        self._update_ppg_plots(filtered_ppg)
+        self._update_ppg_imu_plots(input_data_ppg)
+
 
 def filter_ppg(input_signal):
     input_signal = np.array(input_signal)
@@ -127,7 +161,7 @@ def filter_ppg(input_signal):
 live_figure = LiveFigure(wlen=WLEN*FRAME_RATE, n_ppg_channels=N_PPG_CHANNELS)
 wristband_listner = WristbandListener(n_ppg_channels=N_PPG_CHANNELS, window_size=WLEN, csv_window=2,
                                       frame_rate=FRAME_RATE, fileindex=args.file_index, bracelet=args.sensor_size)
-imu_listener = BluetoothIMU()
+imu_listener = BluetoothIMUReader(port = 'COM6', baud_rate=115200, file_index=args.file_index)
 
 def calibrate_min_max():
     live_figure.green_min = 0
@@ -176,12 +210,11 @@ def update_switch1(on):
 )
 def update_graph_live(n_intervals, existing_fig):
     global live_figure, wristband_listner
-
-    if len(wristband_listner.data_buffer.plotting_queues()[0]) == 0:
-        return live_figure.fig
     
-    live_figure.update_plots(wristband_listner.data_buffer.plotting_queues())
-
+    if len(wristband_listner.data_buffer.plotting_queues()[0]) != 0:
+        live_figure.update_ppg_plots(wristband_listner.data_buffer.plotting_queues())
+    if len(imu_listener.data_buffer.plotting_queues()[0]) != 0:
+        live_figure.update_imu_plots(imu_listener.data_buffer.plotting_queues())
     return live_figure.fig
 
 def start_background_process():

@@ -285,7 +285,7 @@ class WristbandListener:
             elif msg_chapter == 19:
                 self.second_cnt += 1
                 self.keep = []
-                print("timestamp seconds: ", self.second_cnt)
+                #print("timestamp seconds: ", self.second_cnt)
             else:
                 print("chpt ", msg_chapter)
         except Exception as exc:
