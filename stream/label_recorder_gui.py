@@ -29,7 +29,7 @@ LETTER_GESTURES = {
 
 
 def create_gesture_sequence():
-    input_set = [['a']]*15 + [['b']]*15 + [['c']]*15 + [['d']]*15 + [["p"]] * 15 + [["sp"]] * 15 + [["pc", "po"]] * 15 + [["pc", "prr", "po", "pbd"]] * 15 + [["pc", "prl", "po", "pbd"]] * 15 + [["o"]] * 15
+    input_set = [['a']]*15 + [['b']]*15 + [['c']]*15 + [['d']]*15 + [["p"]] * 15 + [["sp"]] * 15 + [["pc", "po"]] * 15  + [["o"]] * 15
     random.shuffle(input_set)
     #expand the list
     input_set = [item for sublist in input_set for item in sublist]
