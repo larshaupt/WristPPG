@@ -92,7 +92,7 @@ class DataBuffer:
         with open(f"{self.filename}.txt", 'a') as f:
             f.write(f'start time: {ti} \n')
         f.close()
-        print("recording started")
+        print("[PPG]: recording started")
 
     def stop_recording(self):
         self.recording = False
@@ -102,8 +102,8 @@ class DataBuffer:
             f.write(f'end time: {tf} \n')
         f.close()
 
-        print("recording stopped")
-        print(f"data saved to {self.filename}.txt")
+        print("[PPG]: recording stopped")
+        print(f"[PPG]: data saved to {self.filename}.txt")
 
     def plotting_queues(self):
         return [np.array(self.buffers[i]) for i in range(self.n_channels)]
@@ -130,13 +130,14 @@ class WristbandListener:
         self.STREAM_CHAR_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
         self.UART_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
         self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\wristband_config3.pcapng'
+        #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz.pcapng'
         assert(os.path.isfile(self.WIRESHARK_LOG_FP))
 
     async def connect_and_stream(self):
         capture = pyshark.FileCapture(self.WIRESHARK_LOG_FP, use_json=True, include_raw=True)
         config_s, config_e = self._find_config_sequence(capture)
-        print(f"Found config, start idx: {config_s} end idx: {config_e}")
-        print("starting ble scanning ...")
+        print(f"[PPG]: Found config, start idx: {config_s} end idx: {config_e}")
+        print("[PPG]: starting ble scanning ...")
         disconn_cnt = 0
         while True:
             if self.client is None or not self.client.is_connected:
@@ -144,26 +145,26 @@ class WristbandListener:
                 try:
                     await self.client.connect()
                 except (bleak.exc.BleakDeviceNotFoundError, bleak.exc.BleakError, AttributeError, TimeoutError) as e:
-                    print("BLE connect error, retry ", e)
+                    print("[PPG]: BLE connect error, retry ", e)
                     disconn_cnt += 1
                 if self.client.is_connected:
                     disconn_cnt = 0
-                    print("CONNECTED BLE BRACELET")
+                    print("[PPG]: CONNECTED BLE BRACELET")
                     await self._stream(capture, config_s, config_e)
                     while self.data_queues[0].qsize() < 1000:
                         await asyncio.sleep(1)
-                    print("full queues, exit")
+                    print("[PPG]: full queues, exit")
                     await self.client.stop_notify(self.STREAM_CHAR_UUID)
                     await self.client.disconnect()
                     break
             if disconn_cnt == 3:
-                print("BLE device not found, do a scan and retry")
+                print("[PPG]: BLE device not found, do a scan and retry")
                 scanner = BleakScanner()
                 await scanner.start()
                 await asyncio.sleep(3)
                 await scanner.stop()
             elif disconn_cnt > 3:
-                print("BLE device still not found, abort!")
+                print("[PPG]: BLE device still not found, abort!")
                 break
             else:
                 await asyncio.sleep(1)
@@ -177,8 +178,8 @@ class WristbandListener:
             elif 'btatt' in cap.frame_info.protocols and cap.btatt.opcode == '0x1b':
                 config_e = capidx
                 break
-        assert config_s is not None, "Error: no config found in wireshark file"
-        assert config_e is not None, "Error: no end of config found in wireshark file"
+        assert config_s is not None, "[PPG]: Error: no config found in wireshark file"
+        assert config_e is not None, "[PPG]: Error: no end of config found in wireshark file"
         return config_s, config_e
 
     async def _stream(self, capture, config_s, config_e):
@@ -212,7 +213,7 @@ class WristbandListener:
         elif self.last_idx == 255:
             self.last_idx = 0
             if self.missed_messages:
-                print("missed messages:", self.missed_messages)
+                print("[PPG]: missed messages:", self.missed_messages)
             self.missed_messages = {}
         else:
             self.last_idx += 1
