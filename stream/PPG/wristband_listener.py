@@ -110,7 +110,7 @@ class DataBuffer:
 
 class WristbandListener:
     def __init__(self, bracelet="M", n_ppg_channels=16, frame_rate=128, window_size=5, 
-                 csv_window=2, queue_update_rate=16, fileindex=0):
+                 csv_window=2, queue_update_rate=16, fileindex=0, data_buffer=None):
         self.n_ppg_channels = n_ppg_channels
         self.frame_rate = frame_rate
         self.data_queues = [multiprocessing.Queue(maxsize=(window_size+2)*frame_rate) 
@@ -123,8 +123,11 @@ class WristbandListener:
         self.threads = []
         # self.ppg_exp_avg = [0 for _ in range(n_ppg_channels)]
         # self.sf = 0.9s
-        self.data_buffer = DataBuffer(n_channels=n_ppg_channels+3, frame_rate=frame_rate, 
+        if data_buffer is None:
+            self.data_buffer = DataBuffer(n_channels=n_ppg_channels+3, frame_rate=frame_rate, 
                                       plotting_window=window_size, csv_window=csv_window, fileindex=fileindex) 
+        else:
+            self.data_buffer = data_buffer
         
         self.BRACELET_UUID = bracelet_uuids[bracelet]
         self.STREAM_CHAR_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"

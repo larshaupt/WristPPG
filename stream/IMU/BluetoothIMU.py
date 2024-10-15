@@ -10,36 +10,14 @@ from dash import Dash, dcc, html
 from dash.dependencies import Input, Output
 import plotly.graph_objs as go
 from collections import deque
+import multiprocessing
+import asyncio
 
 running = True
 SAMPLES_PER_PACKAGE = 8
 save_path = r"C:\Users\lhauptmann\Code\WristPPG2\data"
 
-""" class DataBuffer:
-    def __init__(self):
-        self.data = []
-        self.is_recording = False
-
-    def add_data(self, data):
-        if self.is_recording:
-            self.data.append(data)
-
-    def set_recording(self, on):
-        #Enable or disable data recording.
-        self.is_recording = on
-
-    def plotting_queues(self):
-        #Return data for plotting. This assumes that each data point has a similar structure.
-        acc_x = [d['acc_x'] for d in self.data]
-        acc_y = [d['acc_y'] for d in self.data]
-        acc_z = [d['acc_z'] for d in self.data]
-        gyro_x = [d['gyro_x'] for d in self.data]
-        gyro_y = [d['gyro_y'] for d in self.data]
-        gyro_z = [d['gyro_z'] for d in self.data]
-        timestamps = [d['timestamp'] for d in self.data]
-        
-        return acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamps """
-        
+ 
         
 class DataBuffer:
     def __init__(self, n_channels=8, frame_rate=128, plotting_window=5, csv_window=2, fileindex=0):
@@ -60,7 +38,6 @@ class DataBuffer:
 
     def add_data(self, qidx, val):
 
-            
         self.buffers[qidx].append(val)
         self.csv_buffers[qidx].append(val)
 
@@ -124,10 +101,9 @@ class DataBuffer:
 
 
 class BluetoothIMUReader:
-    def __init__(self, port, baud_rate, save_file="data.csv", file_index=0):
+    def __init__(self, port, baud_rate, file_index=0, frame_rate=128, window_size=5, n_channels=8, queue_update_rate=16, data_buffer=None):
         self.port = port
         self.baud_rate = baud_rate
-        self.save_file = save_file
         self.ser = None  # Serial object will be initialized in the `init_connection()` method
         self.received_data = []
         self.packages = [-1]
@@ -135,9 +111,18 @@ class BluetoothIMUReader:
         self.current_package = -1
         self.running = False
         self.file_index = file_index
+        self.n_channels = n_channels
+        self.data_queues = [multiprocessing.Queue(maxsize=(window_size+2)*frame_rate) 
+                    for _ in range(n_channels)]
+        self.queue_update_rate = queue_update_rate
 
         # Initialize the data buffer
-        self.data_buffer = DataBuffer(n_channels=8, frame_rate=128, plotting_window=5, csv_window=2, fileindex=self.file_index)
+        if data_buffer is None:
+            self.data_buffer = DataBuffer(n_channels=8, frame_rate=128, plotting_window=5, csv_window=2, fileindex=self.file_index)
+            self.qidx_offset = 0
+        else:
+            self.data_buffer = data_buffer
+            self.qidx_offset = 19
         self.ser = serial.Serial(self.port, self.baud_rate)
         print(f"Connected to {self.port} at {self.baud_rate} baud rate")
 
@@ -204,61 +189,58 @@ class BluetoothIMUReader:
         # Assuming the maximum value is 250 deg/s (units: deg/s)
         gyro_lsb_div = 64
         return gyro / gyro_lsb_div
+    
+    def data_transfer(self):
+        while True:
+            if self.data_queues[0].empty():
+                continue
+            for qidx, qu in enumerate(self.data_queues):
+                self.data_buffer.add_data(qidx + self.qidx_offset, qu) 
+            time.sleep(1.0 / self.queue_update_rate)
 
-    def save_data(self):
-        if len(self.received_data) > 0:
-            with open(self.save_file, mode='a', newline='') as file:
-                writer = csv.DictWriter(file, fieldnames=self.received_data[0].keys())
-                if file.tell() == 0:
-                    writer.writeheader()
-                for data in self.received_data:
-                    writer.writerow(data)
-            self.received_data = []  # Clear the buffer after saving
 
     def update(self):
-        try:
-            data = self.read_data()
-        except Exception as e:
-            print(f"[IMU]: Error reading data: {e}")
-            return
-        
-        if data:
-            if isinstance(data, int):
-                package = data
-                #print(f"[IMU] Package count: {package}")
-                if package != self.packages[-1]:
-                    self.packages.append(package)
-                if self.current_package != package:
-                    self.current_package = package
-                return None
-            elif isinstance(data, str):
-                print("[IMU]: ",data)
-                return None
-            
-            (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer) = data
-            acc_x = self.process_acc(acc_x)
-            acc_y = self.process_acc(acc_y)
-            acc_z = self.process_acc(acc_z)
-            acc_x, acc_y, acc_z = self.map_geometry_to_ppg(acc_x, acc_y, acc_z)
-            gyro_x = self.process_gyro(gyro_x)
-            gyro_y = self.process_gyro(gyro_y)
-            gyro_z = self.process_gyro(gyro_z)
-            gryo_x, gyro_y, gyro_z = self.map_geometry_to_ppg(gyro_x, gyro_y, gyro_z)
+        while self.running:  # Loop as long as the connection is alive
+            try:
+                data = self.read_data()
+            except Exception as e:
+                print(f"[IMU]: Error reading data: {e}")
+                continue  # If there's an error, continue to the next iteration
+            if data:
+                if isinstance(data, int):
+                    package = data
+                    if package != self.packages[-1]:
+                        self.packages.append(package)
+                    if self.current_package != package:
+                        self.current_package = package
+                elif isinstance(data, str):
+                    print("[IMU]: ", data)
+                else:
+                    acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer = data
+                    acc_x = self.process_acc(acc_x)
+                    acc_y = self.process_acc(acc_y)
+                    acc_z = self.process_acc(acc_z)
+                    acc_x, acc_y, acc_z = self.map_geometry_to_ppg(acc_x, acc_y, acc_z)
+                    gyro_x = self.process_gyro(gyro_x)
+                    gyro_y = self.process_gyro(gyro_y)
+                    gyro_z = self.process_gyro(gyro_z)
+                    gyro_z, gyro_y, gyro_z = self.map_geometry_to_ppg(gyro_x, gyro_y, gyro_z)
 
-            # Add data to buffer
-            
-            for i, val in enumerate([acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer]):
-                self.data_buffer.add_data(i, val)
+                    for i, (d, qu) in enumerate(zip([acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer], self.data_queues)):
+                        try:
+                            qu.put_nowait(d)
+                        except Exception as e:
+                            print(f"queue {i} full: {e}")
 
-            return acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer
-        return None
-    
+            time.sleep(0.01)  # Add a small delay to prevent high CPU usage
+
+
     def run(self):
         """Main loop for the IMU reading thread."""
         self.init_connection()  # Initialize connection when starting the thread
-        while self.running:
-            self.update()
-    
+        self.update()  # Call the synchronous update loop
+        
+        
     def start_threads(self):
         """Start the IMU data reading thread."""
         if not self.running:
@@ -266,6 +248,7 @@ class BluetoothIMUReader:
             
             self.threads = []
             self.threads.append(threading.Thread(target=self.run, daemon=True))  # Start in a daemon thread
+            self.threads.append(threading.Thread(target=self.data_transfer, daemon=True))
             self.threads.append(threading.Thread(target=self.data_buffer.dump_to_txt, daemon=True))
             
         for thread in self.threads:

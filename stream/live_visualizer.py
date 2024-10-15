@@ -158,10 +158,6 @@ def filter_ppg(input_signal):
     filtered_signal = lfilter(b, a, input_signal, zi=zi)[0]
     return filtered_signal
 
-live_figure = LiveFigure(wlen=WLEN*FRAME_RATE, n_ppg_channels=N_PPG_CHANNELS)
-wristband_listner = WristbandListener(n_ppg_channels=N_PPG_CHANNELS, window_size=WLEN, csv_window=2,
-                                      frame_rate=FRAME_RATE, fileindex=args.file_index, bracelet=args.sensor_size)
-imu_listener = BluetoothIMUReader(port = 'COM6', baud_rate=115200, file_index=args.file_index)
 
 def calibrate_min_max():
     live_figure.green_min = 0
@@ -169,53 +165,7 @@ def calibrate_min_max():
     live_figure.ir_min = 0
     live_figure.ir_max = 1.5e5
 
-#%% DASH APP
-app = Dash(__name__)
-app.assets_ignore = '.*'
 
-app.layout = html.Div(
-    [    
-        daq.BooleanSwitch(
-                id='record-switch',
-                on=False,
-                label="record",
-                style={'display': 'inline-block', 'margin-left': '5px'},
-        ),
-        html.Div(id='recording-switch-output'),
-
-        dcc.Graph(id='live-graph', figure=live_figure.fig),
-        dcc.Interval(
-            id='graph-update',
-            interval = 125, # in milliseconds
-            n_intervals = 0
-        ),
-    ]
-)
-
-@app.callback(
-    Output('recording-switch-output', 'children'),
-    Input('record-switch', 'on')
-)
-def update_switch1(on):
-    global recording_status
-    recording_status = on
-    wristband_listner.data_buffer.set_recording(on)
-    imu_listener.data_buffer.set_recording(on)
-    return ''
-
-@app.callback(
-    Output('live-graph', 'figure'),
-    [ Input('graph-update', 'n_intervals') ],
-    [dash.dependencies.State('live-graph', 'figure')]
-)
-def update_graph_live(n_intervals, existing_fig):
-    global live_figure, wristband_listner
-    
-    if len(wristband_listner.data_buffer.plotting_queues()[0]) != 0:
-        live_figure.update_ppg_plots(wristband_listner.data_buffer.plotting_queues())
-    if len(imu_listener.data_buffer.plotting_queues()[0]) != 0:
-        live_figure.update_imu_plots(imu_listener.data_buffer.plotting_queues())
-    return live_figure.fig
 
 def start_background_process():
     loop = asyncio.new_event_loop()
@@ -224,6 +174,59 @@ def start_background_process():
 
 #%% main
 if __name__ == '__main__':
+    
+    data_buffer = DataBuffer(n_channels=N_PPG_CHANNELS + 3 + 8, frame_rate=FRAME_RATE)
+    live_figure = LiveFigure(wlen=WLEN*FRAME_RATE, n_ppg_channels=N_PPG_CHANNELS)
+    wristband_listner = WristbandListener(n_ppg_channels=N_PPG_CHANNELS, window_size=WLEN, csv_window=2,
+                                        frame_rate=FRAME_RATE, fileindex=args.file_index, bracelet=args.sensor_size, data_buffer=data_buffer)
+    imu_listener = BluetoothIMUReader(port = 'COM6', baud_rate=115200, file_index=args.file_index, data_buffer=data_buffer)
+
+    app = Dash(__name__)
+    app.assets_ignore = '.*'
+
+    app.layout = html.Div(
+        [    
+            daq.BooleanSwitch(
+                    id='record-switch',
+                    on=False,
+                    label="record",
+                    style={'display': 'inline-block', 'margin-left': '5px'},
+            ),
+            html.Div(id='recording-switch-output'),
+
+            dcc.Graph(id='live-graph', figure=live_figure.fig),
+            dcc.Interval(
+                id='graph-update',
+                interval = 125, # in milliseconds
+                n_intervals = 0
+            ),
+        ]
+    )
+
+    @app.callback(
+        Output('recording-switch-output', 'children'),
+        Input('record-switch', 'on')
+    )
+    def update_switch1(on):
+        global recording_status
+        recording_status = on
+        wristband_listner.data_buffer.set_recording(on)
+        imu_listener.data_buffer.set_recording(on)
+        return ''
+
+    @app.callback(
+        Output('live-graph', 'figure'),
+        [ Input('graph-update', 'n_intervals') ],
+        [dash.dependencies.State('live-graph', 'figure')]
+    )
+    def update_graph_live(n_intervals, existing_fig):
+        global live_figure, wristband_listner, imu_listener, data_buffer
+        
+        if len(data_buffer.plotting_queues()[0]) != 0:
+            live_figure.update_ppg_plots(data_buffer.plotting_queues()[:19])
+        if len(data_buffer.plotting_queues()[20]) != 0:
+            live_figure.update_imu_plots(data_buffer.plotting_queues()[19:])
+        return live_figure.fig
 
     try:
         wristband_listner.start_threads()
