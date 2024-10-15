@@ -24,27 +24,22 @@ unsigned short lastPackageCount = 0;
 unsigned short num_packages = SAMPLES_PER_PACKAGE / FIFO_SIZE;
 unsigned short delay_time = (unsigned short)FIFO_SIZE / SAMPLING_FREQUENCY * 1000 * 0.8;
 void startRecording();
+void connectToIMU();
+void disconnectFromIMU();
 
 
 void setup() {
     Serial.begin(115200);
+   
     Serial.println("Starting BLE Client...");
 
     // Initialize BLE device
     BLEDevice::init("ESP32_BLE_Client");  // Use a name for the BLE device
-
-    // Create a BLE client
-    pClient = BLEDevice::createClient();
     
-
-    // Set scan parameters
-    pBLEScan = BLEDevice::getScan();  // Create new scan
-    pBLEScan->setInterval(100);
-    pBLEScan->setWindow(99);
-    pBLEScan->setActiveScan(true);  // Active scan to gather more data
-
     // Initialize I2C communication
     Wire.begin(0x08);  // ESP32 I2C address
+
+    Serial.println("Enter S to start data transmission");
 }
 
 void loop() {
@@ -57,21 +52,57 @@ void loop() {
       
       if (receivedChar == 'S') {  // If the received signal is 'S'
           Serial.println("Start recording signal received.");
+          connectToIMU();
           recording = true;
       } else if (receivedChar == 'E') {
-        Serial.println("End recording signal received.");
+        disconnectFromIMU();
         recording = false;
+        Serial.println("End recording signal received.");
+        Serial.println("Enter S to start data transmission");
         delay(1000);
       }
   }
-  
+
   if (recording) {
   startRecording();
   } 
-  
-
 }
 
+void disconnectFromIMU() {
+    if (deviceConnected) {
+        // Disconnect the BLE client from the target device
+        Serial.println("Disconnecting from the target device...");
+        pClient->disconnect();
+        
+        // Wait a short delay to ensure the disconnection is processed
+        delay(1000);
+
+        // Reset connection status flags
+        deviceConnected = false;
+        foundTargetDevice = false;
+        
+        // Stop any active BLE scan
+        pBLEScan->stop();
+        
+        Serial.println("Disconnected successfully.");
+    } else {
+        Serial.println("No device connected to disconnect.");
+    }
+}
+
+
+void connectToIMU() {
+    Serial.println("Connecting to IMU...");
+    // Create a BLE client
+    pClient = BLEDevice::createClient();
+    
+    // Set scan parameters
+    pBLEScan = BLEDevice::getScan();  // Create new scan
+    pBLEScan->setInterval(100);
+    pBLEScan->setWindow(99);
+    pBLEScan->setActiveScan(true);  // Active scan to gather more data
+
+}
 
 void startRecording() {
     if (!deviceConnected && !foundTargetDevice) {
