@@ -6,6 +6,7 @@ import time
 import csv
 import os
 import sys
+import argparse
 
 class GestureApp:
     SAVE_PATH = r"C:\Users\lhauptmann\Code\WristPPG2\data\labels"
@@ -46,13 +47,15 @@ class GestureApp:
 
     IMAGE_PATH = r"C:\Users\lhauptmann\Code\WristPPG2\scripts\images"
 
-    def __init__(self, root, file_index):
+    def __init__(self, root, file_index, repetition_mode=False):
         self.root = root
         self.fname = os.path.join(self.SAVE_PATH, f'label_{file_index:03d}.csv')
         self.data_log = []
         self.letters = []
         self.past_letters = []
+        self.repetition_mode = repetition_mode
         self.gesture_count = 0
+        self.gesture_group_count = 0
 
         self.init_gui()
         self.init_csv()
@@ -90,7 +93,10 @@ class GestureApp:
     def create_gesture_sequence(self):
         train_input_set = [['a']]*15 + [['b']]*15 + [['c']]*15 + [['d']]*15 + [["p"]] * 15 + [["sp"]] * 15 + [["pc", "po"]] * 5 + [["o"]] * 15 + [["pc", "prr", "po", "pbd"]] * 5 + [["pc", "prl", "po", "pbd"]] * 5
         test_input_set = [['a', 'a']]*8 + [['b', 'b']]*8 + [['c', 'c']]*8 + [['d', 'd']]*8 + [["p", "p"]] * 8 + [["sp", "sp"]] * 8 + [["p", "pc", "po"]] * 5 + [["o"]] * 15 + [["p", "pc", "prr", "po", "pbd"]] * 5 + [["p", "pc", "prl", "po", "pbd"]] * 5 + [["p", "pc", "po"]] * 5
-        input_set = test_input_set
+        if self.repetition_mode:
+            input_set = test_input_set
+        else:
+            input_set = train_input_set
         random.shuffle(input_set)
         return input_set[::-1]
 
@@ -157,10 +163,11 @@ class GestureApp:
         while self.letters:
             letter = self.letters.pop()
             self.past_letters.append(letter)
-            self.gesture_count += 1
+            self.gesture_group_count += 1
             if not isinstance(letter, list):
                 letter = [letter]
             for subletter in letter:
+                self.gesture_count += 1
                 start_time = time.time()
                 self.show_letter(subletter)
                 self.countdown(0.1)
@@ -171,12 +178,13 @@ class GestureApp:
             self.progress_bar['value'] += 1
             self.root.update()
 
-            if self.gesture_count == 10 or not self.letters: # break every 10 gestures or when there are no more gestures to be shown
+            if self.gesture_count >= 12 or not self.letters: # break every 12 gestures or when there are no more gestures to be shown
                 self.show_break_message()
                 self.root.wait_variable(self.key_pressed)
                 if self.key_pressed.get() == 'r':
-                    self.repeat_last_n(n=self.gesture_count)
+                    self.repeat_last_n(n=self.gesture_group_count)
                 self.gesture_count = 0
+                self.gesture_group_count = 0
                 self.countdown(0.1)
         # Show finish button after all gestures are shown        
         self.finish_button.place(relx=0.5, rely=0.9, anchor='center')
@@ -194,6 +202,7 @@ class GestureApp:
             if event.char == "r":
                 self.repeat_last_n(n=self.gesture_count)
                 self.gesture_count = 0
+                self.gesture_group_count = 0
                 self.countdown(0.1)
             
             
@@ -236,13 +245,29 @@ class GestureApp:
         self.root.destroy()
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Gesture recording application.")
+    parser.add_argument(
+        "file_index",
+        type=int,
+        help="Index of the file to process"
+    )
+    parser.add_argument(
+        "--rep",
+        action="store_true",
+        help="Enable repetition mode"
+    )
+    return parser.parse_args()
+
 if __name__ == "__main__":
     try:
-        file_index = int(sys.argv[1])
-    except:
-        print("Please provide a file index")
+        args = parse_args()
+        file_index = args.file_index
+        repetition_mode = args.rep
+    except Exception as e:
+        print(f"Error: {e}")
         sys.exit(1)
 
     root = tk.Tk()
-    app = GestureApp(root, file_index)
+    app = GestureApp(root, file_index, repetition_mode=repetition_mode)
     root.mainloop()
