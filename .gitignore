@@ -1,3 +1,5 @@
 *.csv
 *.bin
 *.txt
+*.hdf5
+*.zip
