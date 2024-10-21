@@ -55,7 +55,7 @@ class DataBuffer:
         self.buffers = [deque(maxlen=plotting_window*frame_rate) for _ in range(n_channels)]
         self.csv_buffers = [deque(maxlen=csv_window*frame_rate) for _ in range(n_channels)]
 
-        self.recording = True
+        self.recording = False
         self.n_channels = n_channels
 
     def add_data(self, qidx, val):
@@ -160,11 +160,9 @@ class BluetoothIMUReader:
             if data is not None:
                 if isinstance(data, str) and "Connected to target device" in data:
                     print("[IMU]: Connection established.")
-                    self.data_buffer.set_recording(True)
                     break
                 if isinstance(data, int): # package count
                     print("[IMU]: Connection established.")
-                    self.data_buffer.set_recording(True)
                     break
                 print(data)
         

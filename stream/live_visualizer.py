@@ -163,6 +163,7 @@ wristband_listner = WristbandListener(n_ppg_channels=N_PPG_CHANNELS, window_size
                                       frame_rate=FRAME_RATE, fileindex=args.file_index, bracelet=args.sensor_size)
 imu_listener = BluetoothIMUReader(port = 'COM6', baud_rate=115200, file_index=args.file_index)
 
+
 def calibrate_min_max():
     live_figure.green_min = 0
     live_figure.green_max = 1e5

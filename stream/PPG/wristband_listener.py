@@ -39,7 +39,7 @@ class DataBuffer:
         self.buffers = [deque(maxlen=plotting_window*frame_rate) for _ in range(n_channels)]
         self.csv_buffers = [deque(maxlen=csv_window*frame_rate) for _ in range(n_channels)]
 
-        self.recording = True
+        self.recording = False
         self.n_channels = n_channels
 
     def add_data(self, qidx, qu):
@@ -129,8 +129,8 @@ class WristbandListener:
         self.BRACELET_UUID = bracelet_uuids[bracelet]
         self.STREAM_CHAR_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
         self.UART_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
-        self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\wristband_config3.pcapng'
-        #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz.pcapng'
+        #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\wristband_config3.pcapng'
+        self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz.pcapng'
         assert(os.path.isfile(self.WIRESHARK_LOG_FP))
 
     async def connect_and_stream(self):
@@ -281,7 +281,7 @@ class WristbandListener:
                 for d, qu in zip(ds, self.data_queues[16:]):
                     if d > 32768:
                         d -= 65536
-                    qu.put_nowait(d / 32768.0 * 2 * 9.8)
+                    qu.put_nowait(d / 32768.0 * 8 * 9.8)
 
             elif msg_chapter == 19:
                 self.second_cnt += 1
