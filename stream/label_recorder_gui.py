@@ -56,6 +56,7 @@ class GestureApp:
         self.repetition_mode = repetition_mode
         self.gesture_count = 0
         self.gesture_group_count = 0
+        self.r_key_pressed = False
 
         self.init_gui()
         self.init_csv()
@@ -87,6 +88,7 @@ class GestureApp:
 
     def bind_keys(self):
         self.root.bind('<KeyPress>', self.on_key_press)
+        self.root.bind('<KeyRelease-r>', self.on_key_release_r)
         self.root.bind('<Delete>', self.delete_last)
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -133,6 +135,9 @@ class GestureApp:
         time.sleep(waiting_time)
 
     def init_csv(self):
+        
+        if os.path.exists(self.fname):
+            raise FileExistsError(f"File {self.fname} already exists.")
         with open(self.fname, 'a', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(['start_time', 'end_time', 'label'])
@@ -199,11 +204,16 @@ class GestureApp:
             self.key_pressed.set(event.char)
             if event.char == 's':
                 self.start_end_sequence()
-            if event.char == "r":
+            if event.char == "r" and not self.r_key_pressed:
+                self.self.r_key_pressed = True
                 self.repeat_last_n(n=self.gesture_count)
                 self.gesture_count = 0
                 self.gesture_group_count = 0
                 self.countdown(0.1)
+                
+    def on_key_release_r(self):
+        self.r_key_pressed = False
+
             
             
 
