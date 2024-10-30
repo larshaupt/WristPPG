@@ -36,8 +36,8 @@ class DataBuffer:
         self.csv_window = csv_window
         self.frame_rate = frame_rate
 
-        self.buffers = [deque(maxlen=plotting_window*frame_rate) for _ in range(n_channels)]
-        self.csv_buffers = [deque(maxlen=csv_window*frame_rate) for _ in range(n_channels)]
+        self.buffers = [deque(maxlen=int(plotting_window*frame_rate + 1)) for _ in range(n_channels)]
+        self.csv_buffers = [deque(maxlen=int(csv_window*frame_rate+1)) for _ in range(n_channels)]
 
         self.recording = False
         self.n_channels = n_channels
@@ -45,10 +45,10 @@ class DataBuffer:
     def add_data(self, qidx, qu):
         # if qu.qsize() > 1:
         while not qu.empty():
-            
             val = qu.get(True, 0.0005)
             self.buffers[qidx].append(val)
             self.csv_buffers[qidx].append(val)
+        
 
     def dump_to_txt(self):
         # with open(self.filename, mode='a', newline='') as file:
@@ -113,24 +113,30 @@ class WristbandListener:
                  csv_window=2, queue_update_rate=16, fileindex=0):
         self.n_ppg_channels = n_ppg_channels
         self.frame_rate = frame_rate
-        self.data_queues = [multiprocessing.Queue(maxsize=(window_size+2)*frame_rate) 
-                            for _ in range(n_ppg_channels+3)]
+        self.data_queues = [multiprocessing.Queue(maxsize=int((window_size+2)*frame_rate+1)) 
+                            for _ in range(n_ppg_channels+4)]
         self.second_cnt = 0  # the device counts seconds
         self.last_idx = -1  # index of received message, counts 0-255 (to check for dropped packages)
+        self.last_msg_chapter = -1
         self.queue_update_rate = queue_update_rate
         self.keep = []
         self.client = None
         self.threads = []
         # self.ppg_exp_avg = [0 for _ in range(n_ppg_channels)]
         # self.sf = 0.9s
-        self.data_buffer = DataBuffer(n_channels=n_ppg_channels+3, frame_rate=frame_rate, 
+        self.data_buffer = DataBuffer(n_channels=n_ppg_channels+4, frame_rate=frame_rate, 
                                       plotting_window=window_size, csv_window=csv_window, fileindex=fileindex) 
+        self.package_time = 0
         
         self.BRACELET_UUID = bracelet_uuids[bracelet]
         self.STREAM_CHAR_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
         self.UART_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\wristband_config3.pcapng'
         self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz.pcapng'
+        #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_allchannels.pcapng'
+        #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_Green_Ir_ambient.pcapng'
+        #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_Green_ambient.pcapng'
+        #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_Green_red.pcapng'
         assert(os.path.isfile(self.WIRESHARK_LOG_FP))
 
     async def connect_and_stream(self):
@@ -207,6 +213,8 @@ class WristbandListener:
             await asyncio.sleep(1)
 
     def notif_callback(self, sender, data):
+        num_msg_chapters = self.n_ppg_channels // 4
+        #print(data)
         if self.last_idx == -1:
             self.missed_messages = {}
             self.last_idx = data[0]
@@ -219,16 +227,39 @@ class WristbandListener:
             self.last_idx += 1
         try:
             idx = data.pop(0)
+            
+            #print(idx)
             while idx > self.last_idx:
+                #print(self.last_idx, idx)
                 self.last_idx += 1
-                # print("error, missed message idx {}".format(idx))
+                #print("error, missed message idx {}".format(idx))
                 if idx in self.missed_messages.keys():
                     self.missed_messages[idx] += 1
                 else:
                     self.missed_messages[idx] = 1
+                    
+                # Fill up the queues with NaNs if package got lost
+                self.last_msg_chapter += 1
+                self.last_msg_chapter %= num_msg_chapters
+                for qu in self.data_queues[self.last_msg_chapter*4:(self.last_msg_chapter+1)*4]:
+                    qu.put_nowait(np.nan)
+                    
+                if self.last_msg_chapter == num_msg_chapters - 1:
+                    for qu in self.data_queues[(self.last_msg_chapter+1)*4:(self.last_msg_chapter+1)+3]:
+                        qu.put_nowait(np.nan)     
+                        
+                if self.last_msg_chapter == 0:
+                    self.data_queues[num_msg_chapters*4 + 3].put_nowait(np.nan) 
+
 
             msg_chapter = data.pop(0)
-            if msg_chapter == 0:
+            self.last_msg_chapter = msg_chapter
+            #print(idx, msg_chapter)
+            
+            
+            
+            if msg_chapter == 0: # first msg_chapter
+                self.data_queues[num_msg_chapters*4 + 3].put_nowait(time.time()) 
                 # self.of_flags[:4] = [data[i*4] == 15 for i in range(4)]
                 of_flags = [data[i*4] == 15 for i in range(4)]
                 ds = [int.from_bytes(data[i*4+1:4+i*4], "big") for i in range(4)]
@@ -237,58 +268,38 @@ class WristbandListener:
                         qu.put_nowait(np.nan)
                     else:
                         qu.put_nowait(d)
-                    
+                        
                 self.keep = data[16:]
 
-            elif msg_chapter == 1:
+            elif msg_chapter in range(1, num_msg_chapters):
+                
                 new_data = self.keep + data
-                # self.of_flags[4:8] = [new_data[i*4] == 15 for i in range(4)]
                 of_flags = [new_data[i*4] == 15 for i in range(4)]
                 ds = [int.from_bytes(new_data[i*4+1:(i+1)*4], "big") for i in range(4)]
-                # for d, qu in zip(ds, self.data_queues_ppg[4:8]):
-                for i, (d, qu) in enumerate(zip(ds, self.data_queues[4:8])):
+                for i, (d, qu) in enumerate(zip(ds, self.data_queues[4*msg_chapter:4*(msg_chapter+1)])):
                     if of_flags[i]:
                         qu.put_nowait('NaN')
                     else:
                         qu.put_nowait(d)
                 self.keep = new_data[16:]
 
-            elif msg_chapter == 2:
-                new_data = self.keep + data
-                of_flags = [new_data[i*4] == 15 for i in range(4)]
-                ds = [int.from_bytes(new_data[i*4+1:(i+1)*4], "big") for i in range(4)]
-                # for d, qu in zip(ds, self.data_queues_ppg[8:12]):
-                for i, (d, qu) in enumerate(zip(ds, self.data_queues[8:12])):
-                    if of_flags[i]:
-                        qu.put_nowait('NaN')
-                    else:
-                        qu.put_nowait(d)
-                self.keep = new_data[16:]
+                if msg_chapter == num_msg_chapters - 1: # last msg_chapter
+                    ds = [int.from_bytes(self.keep[i*2:(i+1)*2], "big") for i in range(3)]
+                    #print(ds)
+                    #print(ds, num_msg_chapters*4, num_msg_chapters*4+3, len(self.data_queues))
+                    for d, qu in zip(ds, self.data_queues[(msg_chapter+1)*4:(msg_chapter+1)*4+3]):
+                        if d > 32768:
+                            d -= 65536
+                        qu.put_nowait(d / 32768.0 * 8 * 9.8)
+                        #print(msg_chapter, (num_msg_chapters+1)*4, (num_msg_chapters+1)*4+3)
 
-            elif msg_chapter == 3:
-                new_data = self.keep + data
-                of_flags = [new_data[i*4] == 15 for i in range(4)]
-                ds = [int.from_bytes(new_data[i*4+1:(i+1)*4], "big") for i in range(4)]
-                # for d, qu in zip(ds, self.data_queues_ppg[12:16]):
-                for i, (d, qu) in enumerate(zip(ds, self.data_queues[12:16])):
-                    if of_flags[i]:
-                        qu.put_nowait('NaN')
-                    else:
-                        qu.put_nowait(d)
-
-                self.keep = new_data[16:]
-                ds = [int.from_bytes(self.keep[i*2:(i+1)*2], "big") for i in range(3)]
-                for d, qu in zip(ds, self.data_queues[16:]):
-                    if d > 32768:
-                        d -= 65536
-                    qu.put_nowait(d / 32768.0 * 8 * 9.8)
-
-            elif msg_chapter == 19:
+            elif msg_chapter == 19: # every second a timestamp
                 self.second_cnt += 1
                 self.keep = []
                 #print("timestamp seconds: ", self.second_cnt)
             else:
                 print("chpt ", msg_chapter)
+                
         except Exception as exc:
             print("full q")
             print(exc)
@@ -326,8 +337,9 @@ class WristbandListener:
         self.threads = []
 
 if __name__ == '__main__':
-    listener = WristbandListener(n_ppg_channels=16, frame_rate=128)
+    listener = WristbandListener(n_ppg_channels=32, frame_rate=128)
 
     listener.start_threads()
+    
     # listener.data_buffer.start_data_dump()
     # asyncio.run(listener.connect_and_stream())

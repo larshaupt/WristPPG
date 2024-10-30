@@ -2,45 +2,14 @@ import serial
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import time
-import csv
 import numpy as np
-import os
 import threading
-from dash import Dash, dcc, html
-from dash.dependencies import Input, Output
-import plotly.graph_objs as go
 from collections import deque
+from collections import defaultdict
 
-running = True
 SAMPLES_PER_PACKAGE = 8
 save_path = r"C:\Users\lhauptmann\Code\WristPPG2\data"
 
-""" class DataBuffer:
-    def __init__(self):
-        self.data = []
-        self.is_recording = False
-
-    def add_data(self, data):
-        if self.is_recording:
-            self.data.append(data)
-
-    def set_recording(self, on):
-        #Enable or disable data recording.
-        self.is_recording = on
-
-    def plotting_queues(self):
-        #Return data for plotting. This assumes that each data point has a similar structure.
-        acc_x = [d['acc_x'] for d in self.data]
-        acc_y = [d['acc_y'] for d in self.data]
-        acc_z = [d['acc_z'] for d in self.data]
-        gyro_x = [d['gyro_x'] for d in self.data]
-        gyro_y = [d['gyro_y'] for d in self.data]
-        gyro_z = [d['gyro_z'] for d in self.data]
-        timestamps = [d['timestamp'] for d in self.data]
-        
-        return acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamps """
-        
-        
 class DataBuffer:
     def __init__(self, n_channels=8, frame_rate=128, plotting_window=5, csv_window=2, fileindex=0):
         
@@ -57,10 +26,11 @@ class DataBuffer:
 
         self.recording = False
         self.n_channels = n_channels
+        
+        self.dump_thread = None
+        self.dump_thread_running = threading.Event()
 
     def add_data(self, qidx, val):
-
-            
         self.buffers[qidx].append(val)
         self.csv_buffers[qidx].append(val)
 
@@ -70,7 +40,7 @@ class DataBuffer:
         #     for i in range(self.n_channels):
         #         row = f'{i}' + np.array(self.csv_buffers[i]).astype(str)
         #         writer.writerow(row)
-        while True:
+        while self.dump_thread_running.is_set():
             if self.recording:
                 f = open(f"{self.filename}.txt", "a")
                 for i in range(self.n_channels):
@@ -123,6 +93,17 @@ class DataBuffer:
         return [np.array(self.buffers[i]) for i in range(self.n_channels)]
 
 
+    def start_dump_thread(self):
+        self.dump_thread_running.set()  # Start the thread
+        self.dump_thread = threading.Thread(target=self.dump_to_txt, daemon=True)
+        self.dump_thread.start()
+
+
+    def stop_dump_thread(self):
+        self.dump_thread_running.clear()  # Signal the thread to stop
+        if self.dump_thread:
+            self.dump_thread.join()  # Wait for the thread to finish
+
 class BluetoothIMUReader:
     def __init__(self, port, baud_rate, save_file="data.csv", file_index=0):
         self.port = port
@@ -133,6 +114,7 @@ class BluetoothIMUReader:
         self.packages = [-1]
         self.data_losses = []
         self.current_package = -1
+        self.sample_per_package = defaultdict(int)
         self.running = False
         self.file_index = file_index
 
@@ -164,7 +146,6 @@ class BluetoothIMUReader:
                 if isinstance(data, int): # package count
                     print("[IMU]: Connection established.")
                     break
-                print(data)
         
     def read_data(self):
         if self.ser.in_waiting:
@@ -203,15 +184,6 @@ class BluetoothIMUReader:
         gyro_lsb_div = 64
         return gyro / gyro_lsb_div
 
-    def save_data(self):
-        if len(self.received_data) > 0:
-            with open(self.save_file, mode='a', newline='') as file:
-                writer = csv.DictWriter(file, fieldnames=self.received_data[0].keys())
-                if file.tell() == 0:
-                    writer.writeheader()
-                for data in self.received_data:
-                    writer.writerow(data)
-            self.received_data = []  # Clear the buffer after saving
 
     def update(self):
         try:
@@ -221,7 +193,7 @@ class BluetoothIMUReader:
             return
         
         if data:
-            if isinstance(data, int):
+            if isinstance(data, int): #Package Count
                 package = data
                 #print(f"[IMU] Package count: {package}")
                 if package != self.packages[-1]:
@@ -247,44 +219,54 @@ class BluetoothIMUReader:
             
             for i, val in enumerate([acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer]):
                 self.data_buffer.add_data(i, val)
+            self.sample_per_package[self.current_package] += 1
 
             return acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer
         return None
     
     def run(self):
         """Main loop for the IMU reading thread."""
-        self.init_connection()  # Initialize connection when starting the thread
         while self.running:
+            #print("Update")
             self.update()
+            
+    def init_connection_thread(self):
+        """Thread wrapper for initializing connection."""
+        self.init_connection()  # Initialize connection here
+        self.init_complete.set()  # Signal that init_connection is complete
     
     def start_threads(self):
         """Start the IMU data reading thread."""
-        if not self.running:
-            self.running = True
-            
+        self.init_complete = threading.Event()  # Event to signal connection initialization completion
+        init_thread = threading.Thread(target=self.init_connection_thread, daemon=True)
+        init_thread.start()
+        init_thread.join()  # Wait for init_connection to finish
+        if not self.running:           
             self.threads = []
             self.threads.append(threading.Thread(target=self.run, daemon=True))  # Start in a daemon thread
-            self.threads.append(threading.Thread(target=self.data_buffer.dump_to_txt, daemon=True))
-            
+            #self.threads.append(threading.Thread(target=self.data_buffer.dump_to_txt, daemon=True))
+            self.data_buffer.start_dump_thread()
+            self.running = True
         for thread in self.threads:
             thread.start()    
         print("[IMU]: Data reading thread started.")
+        
 
     def stop_threads(self):
+        print("[IMU]: Stopping data reading thread...")
         """Stop the IMU data reading thread."""
         if self.running:
             print("Stopping data reading thread...")
             self.running = False
             for thread in self.threads:
+                #print(thread)
                 thread.join()
+            self.data_buffer.stop_dump_thread()
             print("[IMU]: Data reading thread stopped.")
             
-            
-                
         self.end_run()
 
-        
-            
+         
     def get_package_loss(self):
         package_count = np.array(self.packages[1:])
         package_count = np.unique(package_count)
@@ -295,19 +277,16 @@ class BluetoothIMUReader:
         package_loss = np.sum(package_loss - 1)
         return package_loss / (len(package_count) + package_loss)
         
-    def get_data_loss_package(self):
-        # explude first and last package
-        sample_packages = np.array([data["package"] for data in self.received_data if data["package"] != self.received_data[0]["package"]])
-        if len(sample_packages) == 0:
-            return np.nan
-        unique_packages = np.unique(sample_packages)
-        data_loss = (len(unique_packages)*SAMPLES_PER_PACKAGE - len(sample_packages)) / (len(unique_packages)*SAMPLES_PER_PACKAGE)
-        return data_loss
+        
 
     def get_data_loss(self):
-        self.data_losses = np.array(self.data_losses)
-        self.data_losses = self.data_losses[~np.isnan(self.data_losses)]
-        return np.nanmean(self.data_losses)
+        
+        start_package, end_package = self.packages[1], self.packages[-1]
+        total_amount = np.sum([self.sample_per_package[key] for key in range(start_package, end_package)])
+        desired_amount = (end_package - start_package) * SAMPLES_PER_PACKAGE
+        if desired_amount == 0:
+            return np.nan
+        return 1 - total_amount / desired_amount
     
     def end_run(self):
         """Stops the run loop, saves the data, and closes the serial connection."""
@@ -325,10 +304,14 @@ if __name__ == "__main__":
     bluetooth_port = 'COM6'  # Change this to the actual port
     baud_rate = 115200
     imu_reader = BluetoothIMUReader('COM6', 115200, save_file='imu_data.csv')
-    imu_reader.start_threads()  # Start the data reading thread
-    # Later on, you can stop the thread with
-    # wait for 10s
-    time.sleep(100)
-    imu_reader.end_run()
+    try:
+        
+        imu_reader.start_threads()  # Start the data reading thread
+        while imu_reader.running:
+            time.sleep(1)
+        
+    except KeyboardInterrupt:
+        print("Keyboard interrupt detected. Stopping the IMU reader")
+        imu_reader.stop_threads()
 
     
