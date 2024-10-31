@@ -47,7 +47,7 @@ class GestureApp:
 
     IMAGE_PATH = r"C:\Users\lhauptmann\Code\WristPPG2\scripts\images"
 
-    def __init__(self, root, file_index, repetition_mode=False):
+    def __init__(self, root, file_index, repetition_mode=False, random_seed=42):
         self.root = root
         self.fname = os.path.join(self.SAVE_PATH, f'label_{file_index:03d}.csv')
         self.data_log = []
@@ -57,11 +57,15 @@ class GestureApp:
         self.gesture_count = 0
         self.gesture_group_count = 0
         self.r_key_pressed = False
+        self.random_seed = random_seed
+        self.continue_flag = False
 
         self.init_gui()
         self.init_csv()
         self.bind_keys()
         self.running = False
+        if self.random_seed is not None:
+            random.seed(self.random_seed)
 
     def init_gui(self):
         self.root.title("Countdown & Letter Display")
@@ -137,7 +141,11 @@ class GestureApp:
     def init_csv(self):
         
         if os.path.exists(self.fname):
-            raise FileExistsError(f"File {self.fname} already exists.")
+            # if file is not empty
+            with open(self.fname, 'r') as file:
+                reader = csv.reader(file)
+                if len(list(reader)) > 1:
+                    raise FileExistsError(f"File {self.fname} already exists.")
         with open(self.fname, 'a', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(['start_time', 'end_time', 'label'])
@@ -157,37 +165,44 @@ class GestureApp:
         # Remove the start button after recording starts
         self.running = True
         self.start_button.place_forget()
-        start_entry = [(time.time(), time.time(), "s")]
+        start_entry = (time.time(), time.time(), "s")
         self.data_log = [start_entry]
-        self.write_csv(start_entry)
+        self.write_csv(self.data_log)
         total_letters = len(self.create_gesture_sequence())
         self.letters = self.create_gesture_sequence()
         self.progress_bar['maximum'] = total_letters
         self.countdown(5)
 
         while self.letters:
+            self.continue_flag = False
             letter = self.letters.pop()
             self.past_letters.append(letter)
-            self.gesture_group_count += 1
+            self.gesture_group_count += 1   
             if not isinstance(letter, list):
                 letter = [letter]
             for subletter in letter:
-                self.gesture_count += 1
                 start_time = time.time()
                 self.show_letter(subletter)
                 self.countdown(0.1)
+                #entries.append((start_time, time.time(), subletter))
+                if self.continue_flag:
+                    self.continue_flag = False
+                    break
+                self.gesture_count += 1
                 entry = (start_time, time.time(), subletter)
                 self.data_log.append(entry)
                 self.write_csv([entry])
-
-            self.progress_bar['value'] += 1
-            self.root.update()
+            else:
+                         
+                self.progress_bar['value'] += 1
+                self.root.update()
 
             if self.gesture_count >= 12 or not self.letters: # break every 12 gestures or when there are no more gestures to be shown
                 self.show_break_message()
                 self.root.wait_variable(self.key_pressed)
-                if self.key_pressed.get() == 'r':
-                    self.repeat_last_n(n=self.gesture_group_count)
+                #if self.key_pressed.get() == 'r':
+                #    self.r_key_pressed = True
+                #    self.repeat_last_n(n=self.gesture_group_count)
                 self.gesture_count = 0
                 self.gesture_group_count = 0
                 self.countdown(0.1)
@@ -205,29 +220,35 @@ class GestureApp:
             if event.char == 's':
                 self.start_end_sequence()
             if event.char == "r" and not self.r_key_pressed:
-                self.self.r_key_pressed = True
-                self.repeat_last_n(n=self.gesture_count)
+                self.r_key_pressed = True
+                self.repeat_last_n()
                 self.gesture_count = 0
                 self.gesture_group_count = 0
+                self.continue_flag = True
                 self.countdown(0.1)
                 
-    def on_key_release_r(self):
+    def on_key_release_r(self, event):
         self.r_key_pressed = False
 
             
             
 
-    def repeat_last_n(self, n=10):
+    def repeat_last_n(self):
+        n = self.gesture_group_count
+        print(f"Repeating last {n} gestures.")
+        
         letters_to_repeat = self.past_letters[-n:][::-1]
         self.past_letters = self.past_letters[:-n]
         self.letters = self.letters + letters_to_repeat
-        n_single_letters = len([len(letter) for letter in letters_to_repeat])
-        self.data_log = self.data_log[:-n_single_letters]
-        with open(self.fname, 'w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(['start_time', 'end_time', 'label'])
-            writer.writerows(self.data_log)
-        self.progress_bar['value'] -= n_single_letters
+        n_single_letters = self.gesture_count
+        if n_single_letters > 0:
+        #print(f"Deletting {self.data_log[-n_single_letters:]}")
+            self.data_log = self.data_log[:-n_single_letters]
+            with open(self.fname, 'w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(['start_time', 'end_time', 'label'])
+                writer.writerows(self.data_log)
+        self.progress_bar['value'] -= len(letters_to_repeat)
 
     def delete_last(self, event=None):
         if self.data_log:
@@ -267,6 +288,12 @@ def parse_args():
         action="store_true",
         help="Enable repetition mode"
     )
+    
+    parser.add_argument(
+        "--random_seed",
+        type=int,
+        default=None,
+    )
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -274,10 +301,11 @@ if __name__ == "__main__":
         args = parse_args()
         file_index = args.file_index
         repetition_mode = args.rep
+        random_seed = args.random_seed
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
 
     root = tk.Tk()
-    app = GestureApp(root, file_index, repetition_mode=repetition_mode)
+    app = GestureApp(root, file_index, repetition_mode=repetition_mode, random_seed=random_seed)
     root.mainloop()
