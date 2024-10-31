@@ -36,8 +36,8 @@ class DataBuffer:
         self.csv_window = csv_window
         self.frame_rate = frame_rate
 
-        self.buffers = [deque(maxlen=int(plotting_window*frame_rate + 1)) for _ in range(n_channels)]
-        self.csv_buffers = [deque(maxlen=int(csv_window*frame_rate+1)) for _ in range(n_channels)]
+        self.buffers = [deque(maxlen=int((plotting_window+1)*frame_rate + 1)) for _ in range(n_channels)]
+        self.csv_buffers = [deque(maxlen=int((csv_window+1)*frame_rate+1)) for _ in range(n_channels)]
 
         self.recording = False
         self.n_channels = n_channels
@@ -117,6 +117,7 @@ class WristbandListener:
                             for _ in range(n_ppg_channels+4)]
         self.second_cnt = 0  # the device counts seconds
         self.last_idx = -1  # index of received message, counts 0-255 (to check for dropped packages)
+        self.last_reception_time = 0
         self.last_msg_chapter = -1
         self.queue_update_rate = queue_update_rate
         self.keep = []
@@ -132,9 +133,9 @@ class WristbandListener:
         self.STREAM_CHAR_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
         self.UART_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\wristband_config3.pcapng'
-        self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz.pcapng'
+        #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz.pcapng'
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_allchannels.pcapng'
-        #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_Green_Ir_ambient.pcapng'
+        self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_Green_Ir_ambient.pcapng'
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_Green_ambient.pcapng'
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_Green_red.pcapng'
         assert(os.path.isfile(self.WIRESHARK_LOG_FP))
@@ -225,18 +226,23 @@ class WristbandListener:
             self.missed_messages = {}
         else:
             self.last_idx += 1
+            
+        
         try:
+            
             idx = data.pop(0)
             
+            if idx > self.last_idx:
+                print(data)
             #print(idx)
-            while idx > self.last_idx:
+            while idx > self.last_idx: #Package loss
                 #print(self.last_idx, idx)
                 self.last_idx += 1
                 #print("error, missed message idx {}".format(idx))
                 if idx in self.missed_messages.keys():
-                    self.missed_messages[idx] += 1
+                    self.missed_messages[idx] = (self.missed_messages[idx][0] + 1, self.missed_messages[idx][1] +  time.time() - self.last_reception_time)
                 else:
-                    self.missed_messages[idx] = 1
+                    self.missed_messages[idx] = (1, time.time() - self.last_reception_time)
                     
                 # Fill up the queues with NaNs if package got lost
                 self.last_msg_chapter += 1
@@ -245,13 +251,14 @@ class WristbandListener:
                     qu.put_nowait(np.nan)
                     
                 if self.last_msg_chapter == num_msg_chapters - 1:
-                    for qu in self.data_queues[(self.last_msg_chapter+1)*4:(self.last_msg_chapter+1)+3]:
+                    for qu in self.data_queues[(self.last_msg_chapter+1)*4:(self.last_msg_chapter+1)*4+3]:
                         qu.put_nowait(np.nan)     
                         
-                if self.last_msg_chapter == 0:
+                if self.last_msg_chapter == 0: # timestamp
                     self.data_queues[num_msg_chapters*4 + 3].put_nowait(np.nan) 
+                
 
-
+            self.last_reception_time = time.time()
             msg_chapter = data.pop(0)
             self.last_msg_chapter = msg_chapter
             #print(idx, msg_chapter)

@@ -18,9 +18,10 @@ parser.add_argument('--file_index', type=int, default=0, help='recording index')
 parser.add_argument('--sensor_size', type=str, default='M', help='size of the sensor footprint')
 args = parser.parse_args()
 
-FRAME_RATE = 112.2
+FRAME_RATE_PPG = 112.22
+FRAME_RATE_IMU = 112.1
 WLEN = 5
-N_PPG_CHANNELS = 16
+N_PPG_CHANNELS = 24
 recording_status = False
 calibration_status = False
 
@@ -172,10 +173,10 @@ def filter_ppg(input_signal):
     filtered_signal = lfilter(b, a, input_signal, zi=zi)[0]
     return filtered_signal
 
-live_figure = LiveFigure(wlen=WLEN*FRAME_RATE, n_ppg_channels=N_PPG_CHANNELS)
+live_figure = LiveFigure(wlen=WLEN*max(FRAME_RATE_PPG, FRAME_RATE_IMU), n_ppg_channels=N_PPG_CHANNELS)
 wristband_listner = WristbandListener(n_ppg_channels=N_PPG_CHANNELS, window_size=WLEN, csv_window=2,
-                                     frame_rate=FRAME_RATE, fileindex=args.file_index, bracelet=args.sensor_size)
-imu_listener = BluetoothIMUReader(port = 'COM6', baud_rate=115200, file_index=args.file_index)
+                                     frame_rate=FRAME_RATE_PPG, fileindex=args.file_index, bracelet=args.sensor_size)
+imu_listener = BluetoothIMUReader(port = 'COM6', baud_rate=115200, file_index=args.file_index, frame_rate=FRAME_RATE_IMU)
 
 
 def calibrate_min_max():

@@ -21,8 +21,8 @@ class DataBuffer:
         self.csv_window = csv_window
         self.frame_rate = frame_rate
 
-        self.buffers = [deque(maxlen=plotting_window*frame_rate) for _ in range(n_channels)]
-        self.csv_buffers = [deque(maxlen=csv_window*frame_rate) for _ in range(n_channels)]
+        self.buffers = [deque(maxlen=int(plotting_window*frame_rate)) for _ in range(n_channels)]
+        self.csv_buffers = [deque(maxlen=int(csv_window*frame_rate)) for _ in range(n_channels)]
 
         self.recording = False
         self.n_channels = n_channels
@@ -105,7 +105,7 @@ class DataBuffer:
             self.dump_thread.join()  # Wait for the thread to finish
 
 class BluetoothIMUReader:
-    def __init__(self, port, baud_rate, save_file="data.csv", file_index=0):
+    def __init__(self, port, baud_rate, save_file="data.csv", file_index=0, frame_rate=112.2):
         self.port = port
         self.baud_rate = baud_rate
         self.save_file = save_file
@@ -117,9 +117,10 @@ class BluetoothIMUReader:
         self.sample_per_package = defaultdict(int)
         self.running = False
         self.file_index = file_index
+        self.frame_rate = frame_rate
 
         # Initialize the data buffer
-        self.data_buffer = DataBuffer(n_channels=8, frame_rate=128, plotting_window=5, csv_window=2, fileindex=self.file_index)
+        self.data_buffer = DataBuffer(n_channels=8, frame_rate=self.frame_rate, plotting_window=5, csv_window=2, fileindex=self.file_index)
         self.ser = serial.Serial(self.port, self.baud_rate)
         print(f"Connected to {self.port} at {self.baud_rate} baud rate")
 
