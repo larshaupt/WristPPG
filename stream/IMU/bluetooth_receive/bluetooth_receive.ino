@@ -7,8 +7,8 @@
 #include <BLEAdvertisedDevice.h>
 #include "QMI8658.h"
 
-//#define TARGET_DEVICE_ADDRESS "7c:df:a1:ed:61:55"  // Replace with the target device's MAC address
-#define TARGET_DEVICE_ADDRESS "7c:df:a1:ed:60:11" // Replace with the target device's MAC address
+#define TARGET_DEVICE_ADDRESS "7c:df:a1:ed:61:55" 
+//#define TARGET_DEVICE_ADDRESS "7c:df:a1:ed:60:11"
 #define SERVICE_UUID "12345678-1234-1234-1234-123456789012"  // Replace with your service UUID
 #define CHARACTERISTIC_UUID "12345678-1234-1234-1234-123456789013"  // Replace with your characteristic UUID
 #define SAMPLES_PER_PACKAGE 32
@@ -21,6 +21,7 @@ bool deviceConnected = false;
 bool foundTargetDevice = false;
 bool recording = false;
 unsigned short lastPackageCount = 0;
+unsigned int lastPackageTime = 0;
 unsigned short num_packages = SAMPLES_PER_PACKAGE / FIFO_SIZE;
 unsigned short delay_time = (unsigned short)FIFO_SIZE / SAMPLING_FREQUENCY * 1000 * 0.8;
 void startRecording();
@@ -162,6 +163,7 @@ void startRecording() {
 
         // Read the value of the characteristic
         String value = pRemoteCharacteristic->readValue();
+        //Serial.println("Received data: " + value);
         if (value.length() >= (sizeof(uint16_t) * 6 * SAMPLES_PER_PACKAGE + 6)) {  // Ensure enough bytes for 6 samples * 6 shorts + 6 timestamps (3 bytes each)
           unsigned short index = 0;
 
@@ -177,8 +179,9 @@ void startRecording() {
             if (package_count <= lastPackageCount){
               break;
             }
-
+          
           lastPackageCount = package_count;
+          
           short sensorData[SAMPLES_PER_PACKAGE][6]; // 6 samples of 6 shorts
               //Reassemble the timestamp
             unsigned int timestamp = (static_cast<uint32_t>(value[index++]) << 16) | 
@@ -194,6 +197,7 @@ void startRecording() {
             index++; // for suffix
 
             Serial.println("Package count: " + String(package_count));
+            
             // Print the decoded accelerometer and gyroscope data for each sample
             for (unsigned char i = 0; i < FIFO_SIZE; i++) {
               for (int j = 0; j < 6; j++) {

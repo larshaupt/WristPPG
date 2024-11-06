@@ -6,6 +6,7 @@ import numpy as np
 import threading
 from collections import deque
 from collections import defaultdict
+from PPG.wristband_listener import DataBuffer
 
 SAMPLES_PER_PACKAGE = 8
 save_path = r"C:\Users\lhauptmann\Code\WristPPG2\data"
@@ -21,8 +22,8 @@ class DataBuffer:
         self.csv_window = csv_window
         self.frame_rate = frame_rate
 
-        self.buffers = [deque(maxlen=int(plotting_window*frame_rate)) for _ in range(n_channels)]
-        self.csv_buffers = [deque(maxlen=int(csv_window*frame_rate)) for _ in range(n_channels)]
+        self.buffers = [deque(maxlen=int((plotting_window+1)*frame_rate + 1)) for _ in range(n_channels)]
+        self.csv_buffers = [deque(maxlen=int((csv_window+1)*frame_rate+1)) for _ in range(n_channels)]
 
         self.recording = False
         self.n_channels = n_channels
@@ -104,12 +105,18 @@ class DataBuffer:
         if self.dump_thread:
             self.dump_thread.join()  # Wait for the thread to finish
 
+import asyncio
+import serial_asyncio
+from collections import defaultdict
+import time
+import threading
+
 class BluetoothIMUReader:
     def __init__(self, port, baud_rate, save_file="data.csv", file_index=0, frame_rate=112.2):
         self.port = port
         self.baud_rate = baud_rate
         self.save_file = save_file
-        self.ser = None  # Serial object will be initialized in the `init_connection()` method
+        self.ser = serial.Serial(self.port, self.baud_rate)
         self.received_data = []
         self.packages = [-1]
         self.data_losses = []
@@ -118,154 +125,136 @@ class BluetoothIMUReader:
         self.running = False
         self.file_index = file_index
         self.frame_rate = frame_rate
+        self.last_package_time = 0
+        self.new_package_flag = False
 
         # Initialize the data buffer
         self.data_buffer = DataBuffer(n_channels=8, frame_rate=self.frame_rate, plotting_window=5, csv_window=2, fileindex=self.file_index)
-        self.ser = serial.Serial(self.port, self.baud_rate)
         print(f"Connected to {self.port} at {self.baud_rate} baud rate")
 
-    def send_signal(self,signal):
+    async def send_signal(self, signal):
+        """Asynchronously send a signal to start/stop."""
         try:
-
-            # Send the start/stop signal
-            self.ser.write(signal.encode())  # Sending the signal as bytes
+            await asyncio.get_running_loop().run_in_executor(None, self.ser.write, signal.encode())
             print(f"[IMU] Signal '{signal}' sent.")
         except Exception as e:
             print(f"[IMU] Failed to send signal: {e}")
 
-
-    def init_connection(self):
-        """Initialize the Bluetooth serial connection."""
-        self.send_signal('S')
-        
+    async def init_connection(self):
+        """Initialize the Bluetooth serial connection asynchronously."""
+        await self.send_signal('S')
         while True:
-            data = self.read_data()
+            data = await self.read_data_async()
             if data is not None:
                 if isinstance(data, str) and "Connected to target device" in data:
                     print("[IMU]: Connection established.")
                     break
-                if isinstance(data, int): # package count
+                if isinstance(data, int):  # Package count
                     print("[IMU]: Connection established.")
                     break
-        
-    def read_data(self):
+
+    async def read_data_async(self):
+        """Asynchronously read data from the serial port."""
         if self.ser.in_waiting:
-            data = self.ser.readline().decode('utf-8').strip()
+            data = await asyncio.get_running_loop().run_in_executor(None, self.ser.readline)
+            data = data.decode('utf-8').strip()
+
             if data.startswith("Package count: "):
-                package_count = int(data[len("Package count: "):])
-                return package_count
+                return int(data[len("Package count: "):])
             if data == "" or len(data.split("\t")) != 7:
                 return data
+
+            # Parse accelerometer and gyroscope data
             data_splits = data.split("\t")
-            acc_x = int(data_splits[0])
-            acc_y = int(data_splits[1])
-            acc_z = int(data_splits[2])
-            gyro_x = int(data_splits[3])
-            gyro_y = int(data_splits[4])
-            gyro_z = int(data_splits[5])
+            acc_x, acc_y, acc_z = map(int, data_splits[:3])
+            gyro_x, gyro_y, gyro_z = map(int, data_splits[3:6])
             timestamp = float(data_splits[6])
             timestamp_computer = int(time.time() * 1000)
+
             return acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer
         return None
 
-    def map_geometry_to_ppg(self, x,y,z):
-        #z = -z
-        #y = -x
-        #x = -y
+    async def run(self):
+        """Main asynchronous loop for reading IMU data."""
+        await self.init_connection()
+        self.running = True
+        while self.running:
+            await self.update()
+
+    async def update(self):
+        """Fetch and process data asynchronously."""
         
-        return -y, -x, -z
-
-    def process_acc(self, acc):
-        # Assuming the maximum value is 2g (units: N)
-        acc_lsb_div = 2**14 
-        return acc / acc_lsb_div * 9.81
-
-    def process_gyro(self, gyro):
-        # Assuming the maximum value is 250 deg/s (units: deg/s)
-        gyro_lsb_div = 64
-        return gyro / gyro_lsb_div
-
-
-    def update(self):
         try:
-            data = self.read_data()
+            data = await self.read_data_async()
         except Exception as e:
             print(f"[IMU]: Error reading data: {e}")
             return
-        
+
         if data:
-            if isinstance(data, int): #Package Count
+            if isinstance(data, int):  # Package count
                 package = data
-                #print(f"[IMU] Package count: {package}")
                 if package != self.packages[-1]:
                     self.packages.append(package)
-                if self.current_package != package:
-                    self.current_package = package
+                self.current_package = package
                 return None
             elif isinstance(data, str):
-                print("[IMU]: ",data)
+                print("[IMU]:", data)
                 return None
-            
-            (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer) = data
+
+            # Process sensor data
+            acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer = data
             acc_x = self.process_acc(acc_x)
             acc_y = self.process_acc(acc_y)
             acc_z = self.process_acc(acc_z)
-            acc_x, acc_y, acc_z = self.map_geometry_to_ppg(acc_x, acc_y, acc_z)
             gyro_x = self.process_gyro(gyro_x)
             gyro_y = self.process_gyro(gyro_y)
             gyro_z = self.process_gyro(gyro_z)
-            gryo_x, gyro_y, gyro_z = self.map_geometry_to_ppg(gyro_x, gyro_y, gyro_z)
 
             # Add data to buffer
-            
             for i, val in enumerate([acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer]):
                 self.data_buffer.add_data(i, val)
             self.sample_per_package[self.current_package] += 1
 
-            return acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer
-        return None
-    
-    def run(self):
-        """Main loop for the IMU reading thread."""
-        while self.running:
-            #print("Update")
-            self.update()
-            
-    def init_connection_thread(self):
-        """Thread wrapper for initializing connection."""
-        self.init_connection()  # Initialize connection here
-        self.init_complete.set()  # Signal that init_connection is complete
-    
     def start_threads(self):
-        """Start the IMU data reading thread."""
-        self.init_complete = threading.Event()  # Event to signal connection initialization completion
-        init_thread = threading.Thread(target=self.init_connection_thread, daemon=True)
-        init_thread.start()
-        init_thread.join()  # Wait for init_connection to finish
-        if not self.running:           
-            self.threads = []
-            self.threads.append(threading.Thread(target=self.run, daemon=True))  # Start in a daemon thread
-            #self.threads.append(threading.Thread(target=self.data_buffer.dump_to_txt, daemon=True))
-            self.data_buffer.start_dump_thread()
-            self.running = True
-        for thread in self.threads:
-            thread.start()    
-        print("[IMU]: Data reading thread started.")
+        """Start async tasks to read IMU data in a separate thread."""
+        def async_task():
+            """Run the asyncio event loop in a separate thread."""
+            asyncio.run(self.run())  # Start the event loop
+
+        # Start the async task in a new thread
+        
+        async_thread = threading.Thread(target=async_task, daemon=True)
+        async_thread.start()
+        self.threads = [async_thread]
+        
+        # Start the data dump thread
+        self.data_buffer.start_dump_thread()
         
 
+        print("[IMU]: Async IMU reading thread started.")
+
     def stop_threads(self):
+        self.running = False
+        """Stop the IMU data reading asynchronously."""
         print("[IMU]: Stopping data reading thread...")
-        """Stop the IMU data reading thread."""
-        if self.running:
-            print("Stopping data reading thread...")
-            self.running = False
-            for thread in self.threads:
-                #print(thread)
-                thread.join()
+        for thread in self.threads:
+            #print(thread)
+            thread.join()
             self.data_buffer.stop_dump_thread()
-            print("[IMU]: Data reading thread stopped.")
-            
+        
+        print("[IMU]: Data reading stopped.")
         self.end_run()
+
+    def map_geometry_to_ppg(self, x, y, z):
+        return -y, -x, -z
+
+    def process_acc(self, acc):
+        acc_lsb_div = 2**14 
+        return acc / acc_lsb_div * 9.81
+
+    def process_gyro(self, gyro):
+        gyro_lsb_div = 64
+        return gyro / gyro_lsb_div
 
          
     def get_package_loss(self):
@@ -281,6 +270,8 @@ class BluetoothIMUReader:
         
 
     def get_data_loss(self):
+        if not self.packages:
+            return np.nan
         
         start_package, end_package = self.packages[1], self.packages[-1]
         total_amount = np.sum([self.sample_per_package[key] for key in range(start_package, end_package)])
@@ -297,7 +288,7 @@ class BluetoothIMUReader:
         print(f"[IMU]: Package loss: {self.get_package_loss()*100:.2f} %")
         print(f"[IMU]: Data loss: {self.get_data_loss()*100:.2f} %")
         print(f"[IMU]: Data saved to {self.data_buffer.filename}.txt")
-    
+        #print("[IMU] Sample ",[np.mean([el for el in self.sample_per_package.values()])])
 
 
 
@@ -313,6 +304,6 @@ if __name__ == "__main__":
         
     except KeyboardInterrupt:
         print("Keyboard interrupt detected. Stopping the IMU reader")
-        imu_reader.stop_threads()
+        imu_reader.stop()
 
     

@@ -41,6 +41,8 @@ class DataBuffer:
 
         self.recording = False
         self.n_channels = n_channels
+        
+        self.running = True
 
     def add_data(self, qidx, qu):
         # if qu.qsize() > 1:
@@ -49,6 +51,8 @@ class DataBuffer:
             self.buffers[qidx].append(val)
             self.csv_buffers[qidx].append(val)
         
+    def set_running(self, value):
+        self.running = value
 
     def dump_to_txt(self):
         # with open(self.filename, mode='a', newline='') as file:
@@ -56,7 +60,7 @@ class DataBuffer:
         #     for i in range(self.n_channels):
         #         row = f'{i}' + np.array(self.csv_buffers[i]).astype(str)
         #         writer.writerow(row)
-        while True:
+        while self.running:
             if self.recording:
                 f = open(f"{self.filename}.txt", "a")
                 for i in range(self.n_channels):
@@ -128,6 +132,7 @@ class WristbandListener:
         self.data_buffer = DataBuffer(n_channels=n_ppg_channels+4, frame_rate=frame_rate, 
                                       plotting_window=window_size, csv_window=csv_window, fileindex=fileindex) 
         self.package_time = 0
+        self.stop_event = threading.Event()  
         
         self.BRACELET_UUID = bracelet_uuids[bracelet]
         self.STREAM_CHAR_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
@@ -146,7 +151,7 @@ class WristbandListener:
         print(f"[PPG]: Found config, start idx: {config_s} end idx: {config_e}")
         print("[PPG]: starting ble scanning ...")
         disconn_cnt = 0
-        while True:
+        while not self.stop_event.is_set():
             if self.client is None or not self.client.is_connected:
                 self.client = BleakClient(self.BRACELET_UUID)
                 try:
@@ -158,9 +163,10 @@ class WristbandListener:
                     disconn_cnt = 0
                     print("[PPG]: CONNECTED BLE BRACELET")
                     await self._stream(capture, config_s, config_e)
-                    while self.data_queues[0].qsize() < 1000:
+                    while self.data_queues[0].qsize() < 1000 and not self.stop_event.is_set():
                         await asyncio.sleep(1)
                     print("[PPG]: full queues, exit")
+                    await capture.close_async()
                     await self.client.stop_notify(self.STREAM_CHAR_UUID)
                     await self.client.disconnect()
                     break
@@ -175,6 +181,8 @@ class WristbandListener:
                 break
             else:
                 await asyncio.sleep(1)
+                
+            
 
     def _find_config_sequence(self, capture):
         config_s, config_e = None, None
@@ -195,7 +203,9 @@ class WristbandListener:
         capture = pyshark.FileCapture(self.WIRESHARK_LOG_FP, use_json=True, include_raw=True)
         for idx, cap in enumerate(capture):
             if idx < config_s or idx > config_e:
-                continue
+                    continue
+            if self.stop_event.is_set():
+                break
             if 'btatt' in cap.frame_info.protocols:
                 if not cap.btatt.has_field('opcode'):
                     print(idx, " no opcode!!!!")
@@ -210,8 +220,13 @@ class WristbandListener:
                     pass
                 else:
                     print(".", end="")
-        while self.data_queues[0].qsize()<128:
+        while self.data_queues[0].qsize()<128 and not self.stop_event.is_set():            
             await asyncio.sleep(1)
+            
+        await capture.close_async()
+            
+            
+            
 
     def notif_callback(self, sender, data):
         num_msg_chapters = self.n_ppg_channels // 4
@@ -326,7 +341,7 @@ class WristbandListener:
             thread.start()
 
     def data_transfer(self):
-        while True:
+        while not self.stop_event.is_set():
             if self.data_queues[0].empty():
                 continue
             for qidx, qu in enumerate(self.data_queues):
@@ -334,15 +349,17 @@ class WristbandListener:
             time.sleep(1.0 / self.queue_update_rate)
 
     def stop_threads(self):
-        if self.client is not None:
-            self.client.disconnect()
+        
+        # Stop recording and join threads
         self.data_buffer.set_recording(False)
-            
+        self.stop_event.set()
         for thread in self.threads:
+            self.data_buffer.set_running(False)
+            #print(thread)
             thread.join()
-
         self.threads = []
-
+        print("[PPG]: Threads stopped")
+        
 if __name__ == '__main__':
     listener = WristbandListener(n_ppg_channels=32, frame_rate=128)
 

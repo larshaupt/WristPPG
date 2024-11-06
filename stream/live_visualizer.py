@@ -1,3 +1,7 @@
+import os
+# to prevent forrtl: error (200): program aborting due to control-C event
+os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
+
 from PPG.wristband_listener import *
 from IMU.BluetoothIMU import BluetoothIMUReader
 
@@ -10,7 +14,7 @@ import plotly
 import plotly.graph_objs as go
 import plotly.subplots
 import argparse
-
+import signal
 from scipy.signal import butter, lfilter, lfilter_zi
 
 parser = argparse.ArgumentParser(description='Record Wristband Signal')
@@ -241,24 +245,36 @@ def start_background_process():
 
 
 
+
+
 #%% main
 if __name__ == '__main__':
 
-    try:
-        
-        wristband_listner.start_threads()
-        imu_listener.start_threads()
-        app.run(debug=True, port=8048, use_reloader=False)
-        
-
-    
-    except KeyboardInterrupt:
+    # Define a handler function
+    def signal_handler(sig, frame):
         print("Keyboard interrupt received. Stopping threads...")
-
-        wristband_listner.stop_threads()
         imu_listener.stop_threads()
-        app.stop()
-        
-    
+        wristband_listner.stop_threads()
         print("Threads stopped.")
+        exit(0)
+    # Register the signal handler
+    signal.signal(signal.SIGINT, signal_handler)
+
+
+    
+    wristband_listner.start_threads()
+    imu_listener.start_threads()
+    app.run(debug=True, port=8048, use_reloader=False)
+        
+
+    
+    #except KeyboardInterrupt:
+    #    print("Keyboard interrupt received. Stopping threads...")
+    #
+    #    wristband_listner.stop_threads()
+    #    imu_listener.stop_threads()
+    #    app.stop()
+    #    
+    #
+    #    print("Threads stopped.")
         
