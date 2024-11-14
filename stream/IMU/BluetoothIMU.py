@@ -206,9 +206,11 @@ class BluetoothIMUReader:
             acc_x = self.process_acc(acc_x)
             acc_y = self.process_acc(acc_y)
             acc_z = self.process_acc(acc_z)
+            acc_x, acc_y, acc_z = self.map_geometry_to_ppg(acc_x, acc_y, acc_z)
             gyro_x = self.process_gyro(gyro_x)
             gyro_y = self.process_gyro(gyro_y)
             gyro_z = self.process_gyro(gyro_z)
+            gyro_x, gyro_y, gyro_z = self.map_geometry_to_ppg(gyro_x, gyro_y, gyro_z)
 
             # Add data to buffer
             for i, val in enumerate([acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, timestamp, timestamp_computer]):
@@ -246,6 +248,9 @@ class BluetoothIMUReader:
         self.end_run()
 
     def map_geometry_to_ppg(self, x, y, z):
+        #z = -z
+        #y = -x
+        #x = -y
         return -y, -x, -z
 
     def process_acc(self, acc):
