@@ -584,7 +584,7 @@ unsigned char QMI8658_init(void)
 	QMI8658_config.inputSelection = QMI8658_CONFIG_ACCGYR_ENABLE; // QMI8658_CONFIG_ACCGYR_ENABLE;
 	QMI8658_config.accRange = QMI8658AccRange_2g;
 	QMI8658_config.accOdr = QMI8658AccOdr_125Hz;
-	QMI8658_config.gyrRange = QMI8658GyrRange_512dps; // QMI8658GyrRange_2048dps   QMI8658GyrRange_1024dps
+	QMI8658_config.gyrRange = QMI8658GyrRange_1024dps; // QMI8658GyrRange_2048dps   QMI8658GyrRange_1024dps
 	QMI8658_config.gyrOdr = QMI8658GyrOdr_125Hz;
 	QMI8658_config.magOdr = QMI8658MagOdr_125Hz;
 	QMI8658_config.magDev = MagDev_AKM09918;

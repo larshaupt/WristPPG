@@ -258,7 +258,7 @@ class BluetoothIMUReader:
         return acc / acc_lsb_div * 9.81
 
     def process_gyro(self, gyro):
-        gyro_lsb_div = 64
+        gyro_lsb_div = 32 # since gyro range is 1024 deg/s now
         return gyro / gyro_lsb_div
 
          
