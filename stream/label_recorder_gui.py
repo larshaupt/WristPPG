@@ -60,11 +60,13 @@ class GestureApp:
         self.r_key_pressed = False
         self.random_seed = random_seed
         self.continue_flag = False
+        self.use_webcam = use_webcam
 
         self.init_gui()
         self.init_csv()
         self.bind_keys()
-        self.init_webcam()
+        if self.use_webcam:
+            self.init_webcam()
         self.running = False
         if self.random_seed is not None:
             random.seed(self.random_seed)
@@ -108,7 +110,7 @@ class GestureApp:
         if self.repetition_mode:
             input_set = test_input_set
         else:
-            input_set = train_input_set[:10]
+            input_set = train_input_set
         random.shuffle(input_set)
         return input_set[::-1]
 
@@ -141,11 +143,17 @@ class GestureApp:
             self.image_label.config(text=icon, image='', font=("Helvetica", 96))
 
         self.root.update()
-        self.webcam.display_text(gesture)
-        if not waiting_time:
-            waiting_time = random.uniform(self.GESTURE_TIME_MIN, self.GESTURE_TIME_MAX)
-        time.sleep(waiting_time)
-        self.webcam.display_text("")
+        if self.use_webcam:
+            self.webcam.display_text(gesture)
+        if waiting_time == -1:
+            self.root.wait_variable(self.key_pressed)
+        else:
+            if not waiting_time:
+                waiting_time = random.uniform(self.GESTURE_TIME_MIN, self.GESTURE_TIME_MAX)
+        
+            time.sleep(waiting_time)
+        if self.use_webcam:
+            self.webcam.display_text("")
 
     def init_csv(self):
         
@@ -172,8 +180,9 @@ class GestureApp:
             
     def start_sequence(self):
         # Remove the start button after recording starts
-        self.webcam.start_recording()
-        self.webcam.display_text("Start")
+        if self.use_webcam:
+            self.webcam.start_recording()
+            self.webcam.display_text("Start")
         self.running = True
         self.start_button.place_forget()
         start_entry = (time.time(), time.time(), "s")
@@ -210,18 +219,31 @@ class GestureApp:
 
             if self.gesture_count >= 12 or not self.letters: # break every 12 gestures or when there are no more gestures to be shown
                 self.show_break_message()
-                self.webcam.display_text("Break")
+                if self.use_webcam:
+                    self.webcam.display_text("Break")
                 self.root.wait_variable(self.key_pressed)
                 #if self.key_pressed.get() == 'r':
                 #    self.r_key_pressed = True
                 #    self.repeat_last_n(n=self.gesture_group_count)
-                self.webcam.display_text("")
+                if self.use_webcam:
+                    self.webcam.display_text("")
                 self.gesture_count = 0
                 self.gesture_group_count = 0
                 self.countdown(0.1)
+
+        self.show_negative_letter()
             
         # Show finish button after all gestures are shown        
         self.finish_button.place(relx=0.5, rely=0.9, anchor='center')
+
+    def show_negative_letter(self):
+        start_time = time.time()
+        negative_gesture = "o"
+        self.show_letter(negative_gesture, -1)
+
+        entry = (start_time, time.time(), negative_gesture)
+        self.data_log.append(entry)
+        self.write_csv([entry])
 
     def show_break_message(self):
         self.label.config(text="Break", font=("Helvetica", 96))
@@ -240,7 +262,8 @@ class GestureApp:
                 self.gesture_count = 0
                 self.gesture_group_count = 0
                 self.continue_flag = True
-                self.webcam.display_text("Repeat")
+                if self.use_webcam:
+                    self.webcam.display_text("Repeat")
                 self.countdown(0.1)
                 
     def on_key_release_r(self, event):
@@ -281,18 +304,21 @@ class GestureApp:
             
     def finish_recording(self):
         # Hide the finish button
+        self.running = False
         self.finish_button.place_forget()
-        self.webcam.display_text("Finish")
+        if self.use_webcam:
+            self.webcam.display_text("Finish")
         self.write_csv([(time.time(), time.time(), "s")])
         time.sleep(1)
-        self.end_webcam()
+        if self.use_webcam:
+            self.end_webcam()
         self.root.destroy()
-        self.running = False
 
     def on_closing(self):
         self.running = False  # Stop any ongoing operations
         time.sleep(1)
-        self.end_webcam()  # Ensure webcam resources are released
+        if self.use_webcam:
+            self.end_webcam()  # Ensure webcam resources are released
         try:
             if self.root.winfo_exists():  # Check if root window exists
                 self.root.destroy()  # Destroy the root window
@@ -305,7 +331,7 @@ class GestureApp:
         self.webcam.stop_streaming()
         self.webcam.release_camera()
 
-
+use_webcam = True
 def parse_args():
     parser = argparse.ArgumentParser(description="Gesture recording application.")
     parser.add_argument(
@@ -324,6 +350,7 @@ def parse_args():
         type=int,
         default=None,
     )
+
     return parser.parse_args()
 
 if __name__ == "__main__":

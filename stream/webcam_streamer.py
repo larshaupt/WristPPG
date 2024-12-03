@@ -8,7 +8,7 @@ class WebcamStreamer:
         self.codec = codec
         self.fps = fps
         self.resolution = resolution
-        self.cap = cv2.VideoCapture(0)
+        self.cap = cv2.VideoCapture(1)
         self.out = None
         self.recording = False
         self.streaming = False  # Initial state is not streaming

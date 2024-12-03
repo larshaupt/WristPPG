@@ -275,7 +275,7 @@ class BluetoothIMUReader:
         
 
     def get_data_loss(self):
-        if not self.packages:
+        if len(self.packages) <= 1:
             return np.nan
         
         start_package, end_package = self.packages[1], self.packages[-1]

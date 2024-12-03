@@ -140,7 +140,7 @@ class WristbandListener:
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\wristband_config3.pcapng'
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz.pcapng'
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_allchannels.pcapng'
-        self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_Green_Ir_ambient.pcapng'
+        self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_Green_Ir.pcapng'
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_Green_ambient.pcapng'
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_Green_red.pcapng'
         assert(os.path.isfile(self.WIRESHARK_LOG_FP))
