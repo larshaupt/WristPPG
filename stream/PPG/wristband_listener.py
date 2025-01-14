@@ -137,6 +137,7 @@ class WristbandListener:
         self.BRACELET_UUID = bracelet_uuids[bracelet]
         self.STREAM_CHAR_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
         self.UART_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
+        Wireshark_logs_path = r"C:\Users\lhauptmann\Code\WristPPG2\stream\PPG"
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\wristband_config3.pcapng'
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz.pcapng'
         #self.WIRESHARK_LOG_FP = r'C:\Users\lhauptmann\Code\WristPPG2\stream\PPG\Lars_112Hz_allchannels.pcapng'
