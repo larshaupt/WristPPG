@@ -3,9 +3,13 @@
 import os
 # to prevent forrtl: error (200): program aborting due to control-C event
 os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
-
+import matplotlib
+matplotlib.use('Agg')
 from PPG.wristband_listener import *
 from IMU.BluetoothIMU import BluetoothIMUReader
+from flask import Flask, jsonify
+from flask_cors import CORS
+import threading
 
 import numpy as np
 import argparse
@@ -13,18 +17,21 @@ import signal
 import time
 import pickle
 from scipy.signal import correlate, correlation_lags
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import plotly.io as pio
+from datetime import datetime
+import logging
+from GestureFiltering import GestureFilteringHMM
 
-import matplotlib.pyplot as plt
 import torch
 from pathlib import Path
 import yaml
 import sys
 import glob
 import os
+from colorama import Fore, Style
+from datetime import datetime
+import logging
 sys.path.append(r"C:\Users\lhauptmann\Code\GestureDetection")
+import matplotlib.pyplot as plt
 
 
     
@@ -37,45 +44,66 @@ LETTER_GESTURES = {
 "prr": "Rotate Right",
 "prl": "Rotate Left",
 "pbd": "Back to Default",
-"pc": "Pinch Hold",
+"pc": "Pinch Close",
 "po": "Pinch Open",
 "sp": "Side Tap",
 "o": "Nothing",
-"s": "Knock"
+"s": "Knock",
+"pr": "Rotate",
 }
+global GESTURE_TO_LABEL, LABEL_TO_GESTURE, LABEL_TO_LETTER
 LABEL_TO_LETTER = {
-    0: "a",
-    1: "b",
-    2: "c",
-    3: "d",
-    4: "p",
-    5: "po",
-    6: "sp",
-    7: "o",
-    8: "prr",
-    9: "prl",
-    10: "pbd",
-    8: "pc",
-    12: "s"
-}
+                        1: "a",
+                        2: "b",
+                        3: "c",
+                        4: "d",
+                        5: "pc",
+                        6: "po",
+                        7: "sp",
+                        8: "pr",
+                        0: "o",
+                        9: "prr",
+                        10: "prl",
+                        11: "pbd",
+                        12: "s"
+                    }
 
 LABEL_TO_GESTURE = {key: LETTER_GESTURES[val] for key, val in LABEL_TO_LETTER.items()}
 
 GESTURE_TO_LABEL = {
-    "a":0,
-    "b":1,
-    "c":2,
-    "d":3,
-    "p":4,
-    "prr":7,
-    "prl":7,
-    "pbd":7,
-    "pc":8,
-    "po":5,
-    "sp":6,
-    "o":7,
-    "s":7
+    "a":1,
+    "b":2,
+    "c":3,
+    "d":4,
+    "p":8,
+    "prr":0,
+    "prl":0,
+    "pbd":0,
+    "pc":5,
+    "po":6,
+    "sp":7,
+    "o":0,
+    "s":0
 }
+
+n_classes = 9
+
+def probability_mapping(probability:np.array, n_classes = n_classes, mapping = {8: [5,6]}):
+    new_prob = np.zeros(n_classes - len(mapping))
+
+    for i in range(probability.shape[0]):
+        if i in mapping:
+            for j in mapping[i]:
+                new_prob[j] += probability[i] / len(mapping[i])
+        else:
+            new_prob[i] = probability[i]
+    
+    new_prob = new_prob / new_prob.sum()
+    #print(new_prob.sum())
+    
+    return new_prob
+    
+    
 
 #%%
 
@@ -86,11 +114,58 @@ args = parser.parse_args()
 
 FRAME_RATE_PPG = 112.22
 FRAME_RATE_IMU = 112.1
-WLEN = 5
+WLEN = 3
 N_PPG_CHANNELS = 16
 recording_status = False
 calibration_status = False
 
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+stop_event = threading.Event()
+
+class PredictionFilter:
+    def __init__(self, n_classes=7, log_to_file=False):
+        self.current_gesture = 0
+        self.current_certainty = 0
+        self.current_max_certainty = 0
+        self.current_probabilities = np.zeros(n_classes)
+        self.current_printed = False
+        self.log_to_file = log_to_file  # Option to log to a file
+    
+    def update(self, probabilities):
+        gesture = np.argmax(probabilities)
+        certainty = probabilities[gesture]
+
+        if gesture == self.current_gesture and certainty > self.current_certainty:
+            self.current_max_certainty = certainty
+        
+        if gesture != self.current_gesture:
+            self.print_prediction(self.current_gesture, self.current_max_certainty)
+            self.current_printed = False
+
+        self.current_gesture = gesture
+        self.current_certainty = certainty
+        self.current_probabilities = probabilities
+        return gesture
+
+    def print_prediction(self, gesture, certainty, threshold = 0.5):
+        if certainty > threshold and gesture != 0:
+            # Prepare the message
+            time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            message = (
+                f"{Fore.CYAN}[{time}]{Style.RESET_ALL} "
+                f"{Fore.GREEN}Gesture: {LABEL_TO_GESTURE[gesture]}{Style.RESET_ALL}, "
+                f"Certainty: {Fore.YELLOW}{certainty * 100:.1f}%{Style.RESET_ALL}"
+            )
+            # Print to console
+            print("=" * 40)
+            print(message)
+            print("=" * 40)
+
+            # Log to file if enabled
+            if self.log_to_file:
+                logging.info(f"Gesture: {LABEL_TO_GESTURE[gesture]}, Certainty: {certainty * 100:.1f}%")
+    
 
 def get_correlation_lag(x,y):
     correlation = correlate(x, y, mode="full")
@@ -101,24 +176,34 @@ def get_correlation_lag(x,y):
 def load_model(model_path):
     load_config=Path(os.path.join(model_path,"config.yml"))
     config = yaml.load(load_config.read_text(), Loader=yaml.Loader)
+    #print(config)
     #del(config.model.nsensors["accel"])
     #del(config.model.nhidden_units["accel"])
     #del(config.model.nsensors["gyro"])
     #del(config.model.nhidden_units["gyro"])
     #del(config.model.nsensors["ppg"])
     #del(config.model.nhidden_units["ppg"])
-    config.model.nsensors["ppg"] = 16
+    #config.model.nsensors["ppg"] = 16
+    del config.model.nsensors["ppg"]
+    del config.model.nhidden_units["ppg"]
+    del config.model.kernel_multiplier["ppg"]
+    del config.model.nsensors["ppg_accel"]
+    del config.model.nhidden_units["ppg_accel"]
+    del config.model.kernel_multiplier["ppg_accel"]
+
     device = "cpu"
     config.device = device
     config.data_config.max_shift = 0
 
 
 
-    model = config.model.setup(prediction_heads={"gesture":9}).to(device)
+    model = config.model.setup(prediction_heads={"gesture":n_classes}).to(device)
     weights_path = glob.glob(os.path.join(model_path , "best_model__*.pt"))[0]
     weights_path = glob.glob(os.path.join(model_path , "checkpoint_*.pt"))[0]
     load_state_dict = torch.load(weights_path, map_location=device)["model_state_dict"]
     print(f"Loading model from {weights_path}")
+    
+    #print(model)
 
     # remove all weights that correspond to pred_head
     #load_state_dict = {k: v for k, v in load_state_dict.items() if not k.startswith("pred_heads")}
@@ -126,23 +211,39 @@ def load_model(model_path):
     model.eval()
     return model
 
-def prepare_data(ppg_data, imu_data):
 
-    ppg_acc = ppg_data[:,-3:]
+    
+
+def prepare_data(imu_data = None, ppg_data = None, window_size = 150):
+    if ppg_data is not None:
+        ppg_acc = ppg_data[:,-3:]
+        ppg_mag = np.linalg.norm(ppg_acc, axis=1)
+        
     imu_acc = imu_data[:,:3]
-
-    ppg_mag = np.linalg.norm(ppg_acc, axis=1)
     imu_mag = np.linalg.norm(imu_acc, axis=1)
 
-    lag_prior = -40
-    lag = get_correlation_lag(ppg_mag, imu_mag)
-    lag = int(0.2*lag + 0.8*lag_prior)
+    if ppg_data is None:
+        lag = 0
+    else:
+        lag_prior = -40
+        lag = get_correlation_lag(ppg_mag, imu_mag)
+        #print(lag)
+        lag = int(1*lag + 0.0*lag_prior)
+        lag = min(max(lag, -100), 0)
 
-    window_size = 150
-    latest_window_ppg = ppg_data[:window_size,:]
+    if ppg_data is not None:
+        latest_window_ppg = ppg_data[:window_size,:]
     latest_window_imu = imu_data[-lag:-lag+window_size,:]
+    
+    if ppg_data is not None and not (latest_window_ppg.shape[0] == latest_window_imu.shape[0] == window_size):
+        print(f"Shapes do not match: {latest_window_ppg.shape[0]} {latest_window_imu.shape[0]}")
+        print(f"PPG: {ppg_acc.shape}, IMU: {imu_acc.shape}")
+        return None
 
-    latest_window_ppg = (latest_window_ppg - latest_window_ppg.mean(axis=0)) / latest_window_ppg.std(axis=0)
+    if ppg_data is not None:
+        latest_window_ppg = (latest_window_ppg - latest_window_ppg.mean(axis=0)) / latest_window_ppg.std(axis=0)
+    else:
+        latest_window_ppg = np.zeros((window_size, 16))
     latest_window_imu = (latest_window_imu - latest_window_imu.mean(axis=0)) / latest_window_imu.std(axis=0)
 
     sample = {
@@ -155,6 +256,38 @@ def prepare_data(ppg_data, imu_data):
     return sample
 
 
+def init_react_app():
+    app = Flask(__name__)
+    CORS(app, resources={r"/*": {"origins": "*"}})
+    app.logger.disabled = True
+    global latest_data            
+    latest_data = {
+        "imu_data": [],
+        "gesture": "No Gesture",
+        "confidence": 0,
+        "probability": [0] * (n_classes - 1)
+    }
+
+    @app.route('/data')
+    def get_data():
+        return jsonify(latest_data)
+
+    
+    def update_latest_data(imu_data, gesture, confidence, probability=None):
+        # Convert numpy arrays to JSON-serializable lists of dicts
+        if isinstance(imu_data, np.ndarray):
+            imu_data = [{"accelX": row[0], "accelY": row[1], "accelZ": row[2], 
+                        "gyroX": row[3], "gyroY": row[4], "gyroZ": row[5]} for row in imu_data]
+        latest_data["imu_data"] = imu_data
+        latest_data["gesture"] = gesture
+        latest_data["confidence"] = float(confidence) * 100
+        if probability is not None:
+            latest_data["probabilities"] = [{"name": LABEL_TO_GESTURE[i], "probability": float(probability[i])*100} for i in range(n_classes - 1)]
+            #print(latest_data["probabilities"])
+
+    threading.Thread(target=lambda: app.run(port=5000, debug=False), daemon=True).start()
+    
+    return update_latest_data
 
 
 
@@ -167,75 +300,123 @@ if __name__ == '__main__':
         print("Keyboard interrupt received. Stopping threads...")
         imu_listener.stop_threads()
         wristband_listner.stop_threads()
+        
         print("Threads stopped.")
         exit(0)
     # Register the signal handler
     signal.signal(signal.SIGINT, signal_handler)
-
+   
 
     wristband_listner = WristbandListener(n_ppg_channels=N_PPG_CHANNELS, window_size=WLEN, csv_window=2,
                                      frame_rate=FRAME_RATE_PPG, fileindex=args.file_index, bracelet=args.sensor_size)
-    imu_listener = BluetoothIMUReader(port = 'COM13', baud_rate=115200, file_index=args.file_index, frame_rate=FRAME_RATE_IMU)
+    imu_listener = BluetoothIMUReader(port = 'COM6', baud_rate=115200, file_index=args.file_index, frame_rate=FRAME_RATE_IMU)
 
     
-    wristband_listner.start_threads()
+    #wristband_listner.start_threads()
     imu_listener.start_threads()
 
-    model_path = r"C:\Users\lhauptmann\Code\GestureDetection\experiments\2024-12-03_180833"
+    model_path = r"C:\Users\lhauptmann\Code\GestureDetection\experiments\2025-01-17_111553"
     model = load_model(model_path)
+    
+    filter = GestureFilteringHMM(n_classes, start_neg_prob=0.5, trans_self_prob=0.9, emit_self_prob=0.9)
 
+    # 8 is the Rotation state, 5 is the Pinch Close state, 6 is the Pinch Open state
+    # It is not possibel to got to 8 from any state but 5 and 8
+    filter.trans_prob[8,:] = 0
+    # you can only transition to 6 from 5 and 8
+    filter.trans_prob[6,:] = 0
+    # from state 5 you can eithet go to 6 or 8
+    filter.trans_prob[:,5] = [0, 0, 0, 0, 0, 0, 0.2, 0, 0.8]
+    # from state 8 you can eithet go to 5 or 6
+    filter.trans_prob[:,8] = [0, 0, 0, 0, 0, 0, 0.5, 0, 0.5]
 
-    while True:
+    
+    # normalize
+    filter.trans_prob = filter.trans_prob / filter.trans_prob.sum(axis=1, keepdims=True)
+    
+    # 8 is never emitted, but it's possible to observe 0 when in state 8
+    filter.emit_prob[0,:] = [0.45, 1/70, 1/70, 1/70, 1/70, 1/70, 1/70, 1/70, 0.45]
+    
+    prediction_filter = PredictionFilter(n_classes=n_classes-1)
+  
+    update_latest_data = init_react_app()
 
+    
+    started_inference = False
+    inference_period = 0.01
+    last_inf_time = time.time()
+    
+    
+    
+    
+    try:
+        while not stop_event.is_set():
 
-
-        try:
-            ppg_data = wristband_listner.data_buffer.plotting_queues()
+            start_time = time.time()
+           
+            
+            #ppg_data = wristband_listner.data_buffer.plotting_queues()
+            #ppg_data = None
             imu_data = imu_listener.data_buffer.plotting_queues()
-            #print(ppg_data)
-            #print(np.array(ppg_data).shape, np.array(imu_data).shape)
-            ppg_data_length = min([len(el) for el in ppg_data[:-1]])
-            #ppg_timestamps = np.array(ppg_data[-1])[:ppg_data_length].T
-            ppg_data = np.array([el[:ppg_data_length] for el in ppg_data[:-1]]).T
-            #imu_timestamp = np.array(imu_data[-2:]).T
+
+            #ppg_data_length = min([len(el) for el in ppg_data[:-1]])
+
+            #ppg_data = np.array([el[:ppg_data_length] for el in ppg_data[:-1]]).T
+
             imu_data = np.array(imu_data[:-2]).T
-            #figure, axes = plt.subplots(2, 1, figsize=(10, 10))
-            #axes[0].plot(ppg_data[:,-3:])
-            #axes[0].set_title("PPG Data")   
-            #axes[1].plot(np.array(imu_data)[:,:-2])
-            #axes[1].set_title("IMU Data")
-            #save the figure
-            #plt.savefig('live_data.png')
-            #plt.close()
+            #if imu_data.shape[0] != 0 or ppg_data.shape[0] != 0:
+            #    print(imu_data.shape, ppg_data.shape)
 
-            # save data to pickle file
-            #with open('live_data.pkl', 'wb') as f:
-            #    pickle.dump({'ppg_data': ppg_data, 'ppg_timestamps': ppg_timestamps, 'imu_data': imu_data, 'imu_timestamp': imu_timestamp}, f)
 
-            if imu_data.shape[0] > 200 and ppg_data.shape[0] > 200:
-                sample = prepare_data(ppg_data, imu_data)
+            if imu_data.shape[0] > 200: #and ppg_data.shape[0] > 200:
+                
+                if started_inference == False:
+                    print("Started inference")
+                    started_inference = True
+                
+                sample = prepare_data(ppg_data = None, imu_data = imu_data)
+                if sample is None:
+                    continue
+            
                 with torch.no_grad():
                     output,_,_,xf = model(sample)
-                    gesture = torch.argmax(output).item()
-                    print(LABEL_TO_GESTURE[gesture])
-                figure, ax = plt.subplots(1, figsize=(10, 10))
-                ax.plot(sample["ppg_accel"].squeeze().T, label="PPG Accel")
-                ax.plot(sample["accel"].squeeze().T, label="IMU Accel")
-                ax.set_title(LABEL_TO_GESTURE[gesture])
-                ax.legend()
-                plt.savefig('live_data.png')
-                plt.close()
+                    output = torch.nn.functional.softmax(output, dim=1).squeeze().numpy()
+                    output = probability_mapping(output)
+                    
+                filtered_output = filter.update(np.append(output, [0]))
+                #print(filtered_output)
+                                    
+                pred_gesture = filtered_output.argmax()
+                #print(pred_gesture, filtered_output)
+                
+                gesture = prediction_filter.update(filtered_output)
+                
+                update_latest_data(imu_data, LABEL_TO_GESTURE[pred_gesture], filtered_output[pred_gesture], filtered_output)
+                    
+                    
+            else:
+                
+                if started_inference == True and time.time() - last_inf_time > 5:
+                    print("Stopped inference")
+                    started_inference = False
+                    last_inf_time = time.time()
+                    
+            # Control the loop timing
+            sleep_time = inference_period - (time.time() - start_time)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            
+       
 
+    except KeyboardInterrupt:
+        signal_handler(None, None)
+        
+    finally:
+        plt.close('all')
+        
 
-
-
-
-        except KeyboardInterrupt:
-            print("Keyboard interrupt received. Stopping threads...")
-            imu_listener.stop_threads()
-            wristband_listner.stop_threads()
-            print("Threads stopped.")
-            break
+    
+                    
 
 
 
@@ -243,3 +424,4 @@ if __name__ == '__main__':
 
 
         
+# %%

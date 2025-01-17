@@ -1,6 +1,4 @@
 import serial
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 import time
 import numpy as np
 import threading
@@ -77,7 +75,7 @@ class DataBuffer:
         with open(f"{self.filename}.txt", 'a') as f:
             f.write(f'start time: {ti} \n')
         f.close()
-        print("[IMU]: recording started")
+        #print("[IMU]: recording started")
 
     def stop_recording(self):
         self.recording = False
@@ -125,8 +123,10 @@ class BluetoothIMUReader:
         self.running = False
         self.file_index = file_index
         self.frame_rate = frame_rate
-        self.last_package_time = 0
+        self.last_signal_time = None
+        self.signal_timeout = 5  # Timeout threshold in seconds
         self.new_package_flag = False
+        self.stop_event = threading.Event()
 
         # Initialize the data buffer
         self.data_buffer = DataBuffer(n_channels=8, frame_rate=self.frame_rate, plotting_window=5, csv_window=2, fileindex=self.file_index)
@@ -143,7 +143,7 @@ class BluetoothIMUReader:
     async def init_connection(self):
         """Initialize the Bluetooth serial connection asynchronously."""
         await self.send_signal('S')
-        while True:
+        while not self.stop_event.is_set():
             data = await self.read_data_async()
             if data is not None:
                 if isinstance(data, str) and "Connected to target device" in data:
@@ -156,8 +156,10 @@ class BluetoothIMUReader:
     async def read_data_async(self):
         """Asynchronously read data from the serial port."""
         if self.ser.in_waiting:
+            #print("1.1 reading data")
             data = await asyncio.get_running_loop().run_in_executor(None, self.ser.readline)
             data = data.decode('utf-8').strip()
+            #print("1.2 data read")
 
             if data.startswith("Package count: "):
                 return int(data[len("Package count: "):])
@@ -177,25 +179,36 @@ class BluetoothIMUReader:
     async def run(self):
         """Main asynchronous loop for reading IMU data."""
         await self.init_connection()
+        if self.stop_event.is_set():
+            return
         self.running = True
         while self.running:
             await self.update()
+            
+            # Check for signal timeout
+            if self.last_signal_time and time.time() - self.last_signal_time > self.signal_timeout:
+                print("[IMU]: Signal timeout! No data received.")
+                self.stop_threads()  # Stop the threads
+                break
 
     async def update(self):
         """Fetch and process data asynchronously."""
         
         try:
             data = await self.read_data_async()
+
         except Exception as e:
             print(f"[IMU]: Error reading data: {e}")
             return
 
         if data:
             if isinstance(data, int):  # Package count
+                self.last_signal_time = time.time()
                 package = data
                 if package != self.packages[-1]:
                     self.packages.append(package)
                 self.current_package = package
+                #print(f"[IMU]: Package {package} received.")
                 return None
             elif isinstance(data, str):
                 print("[IMU]:", data)
@@ -217,6 +230,7 @@ class BluetoothIMUReader:
                 self.data_buffer.add_data(i, val)
             self.sample_per_package[self.current_package] += 1
 
+
     def start_threads(self):
         """Start async tasks to read IMU data in a separate thread."""
         def async_task():
@@ -237,6 +251,7 @@ class BluetoothIMUReader:
 
     def stop_threads(self):
         self.running = False
+        self.stop_event.set()
         """Stop the IMU data reading asynchronously."""
         print("[IMU]: Stopping data reading thread...")
         for thread in self.threads:

@@ -99,6 +99,9 @@ void setup() {
     // Start the service
     pService->start();
 
+    pServer->getAdvertising()->setMinInterval(320);
+    pServer->getAdvertising()->setMaxInterval(800);
+
     // Start advertising
     pServer->getAdvertising()->start();
     Serial.println("Waiting for a client connection..."); 

@@ -2,10 +2,10 @@ import asyncio
 import threading
 from multiprocessing import Manager, Process
 import multiprocessing
-import matplotlib
-matplotlib.use("TkAgg")
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
+#import matplotlib
+#matplotlib.use("TkAgg")
+#import matplotlib.pyplot as plt
+#import matplotlib.animation as animation
 import time
 import pyshark
 from bleak import BleakClient, BleakScanner
@@ -35,6 +35,7 @@ class DataBuffer:
         self.plotting_winoow = plotting_window
         self.csv_window = csv_window
         self.frame_rate = frame_rate
+
 
         self.buffers = [deque(maxlen=int((plotting_window+1)*frame_rate + 1)) for _ in range(n_channels)]
         self.csv_buffers = [deque(maxlen=int((csv_window+1)*frame_rate+1)) for _ in range(n_channels)]
@@ -114,10 +115,11 @@ class DataBuffer:
 
 class WristbandListener:
     def __init__(self, bracelet="M", n_ppg_channels=16, frame_rate=128, window_size=5, 
-                 csv_window=2, queue_update_rate=16, fileindex=0):
+                 csv_window=2, queue_update_rate=5, fileindex=0):
         self.n_ppg_channels = n_ppg_channels
         self.frame_rate = frame_rate
-        self.data_queues = [multiprocessing.Queue(maxsize=int((window_size+2)*frame_rate+1)) 
+        self.queue_max_length = int((window_size+1)*frame_rate + 1)
+        self.data_queues = [multiprocessing.Queue(maxsize=self.queue_max_length) 
                             for _ in range(n_ppg_channels+4)]
         self.second_cnt = 0  # the device counts seconds
         self.last_idx = -1  # index of received message, counts 0-255 (to check for dropped packages)
@@ -164,7 +166,7 @@ class WristbandListener:
                     disconn_cnt = 0
                     print("[PPG]: CONNECTED BLE BRACELET")
                     await self._stream(capture, config_s, config_e)
-                    while self.data_queues[0].qsize() < 1000 and not self.stop_event.is_set():
+                    while max([q.qsize() for q in self.data_queues]) < self.queue_max_length and not self.stop_event.is_set():
                         await asyncio.sleep(1)
                     print("[PPG]: full queues, exit")
                     await capture.close_async()
@@ -296,7 +298,10 @@ class WristbandListener:
 
             elif msg_chapter in range(1, num_msg_chapters):
                 
-                new_data = self.keep + data
+                if self.keep:
+                    new_data = self.keep + data
+                else:
+                    new_data = data
                 of_flags = [new_data[i*4] == 15 for i in range(4)]
                 ds = [int.from_bytes(new_data[i*4+1:(i+1)*4], "big") for i in range(4)]
                 for i, (d, qu) in enumerate(zip(ds, self.data_queues[4*msg_chapter:4*(msg_chapter+1)])):
@@ -327,6 +332,7 @@ class WristbandListener:
             print("full q")
             print(exc)
 
+
     def start_streaming(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -343,7 +349,7 @@ class WristbandListener:
 
     def data_transfer(self):
         while not self.stop_event.is_set():
-            if self.data_queues[0].empty():
+            if all(q.empty() for q in self.data_queues):
                 continue
             for qidx, qu in enumerate(self.data_queues):
                 self.data_buffer.add_data(qidx, qu) 

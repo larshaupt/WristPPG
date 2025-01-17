@@ -1,0 +1,52 @@
+{
+    "configurations": [
+
+
+        {
+            "name": "FourierDiffusion",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "/local/home/lhauptmann/diffusion/FourierDiffusion",
+            "program": "/local/home/lhauptmann/diffusion/FourierDiffusion/cmd/train.py",
+            "console": "integratedTerminal",
+            "args": [ "label_conditional=true", "trainer.devices=1", "trainer.logger.offline=true", "trainer.logger.log_model=false", "trainer.max_epochs=20", "score_model=default", "datamodule=gestures"    
+            ],
+            "env": {
+            "CUDA_LAUNCH_BLOCKING": "1" }
+        },
+        {
+            "name": "VAE",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "/local/home/lhauptmann/diffusion/FourierDiffusion",
+            "program": "/local/home/lhauptmann/diffusion/FourierDiffusion/cmd/train_vae.py",
+            "console": "integratedTerminal",
+            "args": ["vae_trainer.devices=1", "vae_trainer.logger.offline=true", "vae_trainer.logger.log_model=false"
+            ],
+            "env": {
+            "CUDA_LAUNCH_BLOCKING": "1" }
+        },
+        {
+            "name": "FourierDiffusionSampling",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "/local/home/lhauptmann/diffusion/FourierDiffusion",
+            "program": "/local/home/lhauptmann/diffusion/FourierDiffusion/cmd/sample.py",
+            "console": "integratedTerminal",
+            "args": [ "model_id=8jvdnyfj"
+                
+            ]
+        },
+        {
+            "name": "PPGGestures",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "/local/home/lhauptmann/diffusion/FourierDiffusion",
+            "program": "/local/home/lhauptmann/gestures/GestureDetection/training/train/train.py",
+            "console": "integratedTerminal",
+            "args": [ "baysian_vgg_net"
+                
+            ]
+        }
+    ]
+}
