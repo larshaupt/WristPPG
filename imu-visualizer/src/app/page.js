@@ -21,7 +21,7 @@ const LiveSignalViewer = () => {
   
       const timer = setInterval(fetchData, 50);
       return () => clearInterval(timer);
-  }, []);
+    }, []);
 
     return (
         <div className="w-full p-4 space-y-4">
@@ -82,6 +82,28 @@ const LiveSignalViewer = () => {
                                 <Line type="monotone" dataKey="gyroX" stroke="#ff7300" dot={false} />
                                 <Line type="monotone" dataKey="gyroY" stroke="#ff0000" dot={false} />
                                 <Line type="monotone" dataKey="gyroZ" stroke="#00ff00" dot={false} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                </CardContent>
+            </Card>
+
+            <Card className="w-full">
+                <CardHeader>
+                    <CardTitle>Orientation Angles</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <div className="h-64">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={data}>
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis dataKey="timestamp" tick={false} />
+                                <YAxis domain={[-180, 180]} />
+                                <Tooltip />
+                                <Legend />
+                                <Line type="monotone" dataKey="orientation.yaw" name="Yaw" stroke="#9c27b0" dot={false} />
+                                <Line type="monotone" dataKey="orientation.pitch" name="Pitch" stroke="#2196f3" dot={false} />
+                                <Line type="monotone" dataKey="orientation.roll" name="Roll" stroke="#4caf50" dot={false} />
                             </LineChart>
                         </ResponsiveContainer>
                     </div>

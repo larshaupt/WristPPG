@@ -85,7 +85,7 @@ class GestureFilteringHMM:
         
         # Compute updated belief state (Bayesian filtering)
         updated_belief = self.emit_prob @ observation_probs
-        updated_belief = self.trans_prob.T @ (self.current_belief * updated_belief)
+        updated_belief = (self.trans_prob @ self.current_belief) * updated_belief
 
         # Normalize the updated belief state to a distribution
         self.current_belief = updated_belief / updated_belief.sum()
@@ -129,6 +129,23 @@ def test_gesture_filtering_hmm():
     print(observations)
     # Initialize HMM
     hmm = GestureFilteringHMM(num_states)
+    
+    hmm.trans_prob[8, :] = 0
+    # you can only transition to 6 from 5 and 8
+    hmm.trans_prob[6, :] = 0
+    # from state 5 you can either go to 5 or 8
+    hmm.trans_prob[:, 5] = [0, 0, 0, 0, 0, 0.9, 0, 0, 0.1]
+    # from state 8 you can eithet go to 8 or 6
+    hmm.trans_prob[:, 8] = [0, 0, 0, 0, 0, 0, 0.1, 0, 0.9]
+
+    
+    # normalize
+    hmm.trans_prob = hmm.trans_prob / hmm.trans_prob.sum(axis=0, keepdims=True)
+    
+    
+    # 8 is never emitted, but it's possible to observe 0 when in state 8
+    hmm.emit_prob[0,8] += hmm.emit_prob[8,8]
+    hmm.emit_prob[8,8] = 0
 
     # Run through observations and test updates
     for t, obs in enumerate(observations):

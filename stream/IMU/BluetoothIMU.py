@@ -1,20 +1,28 @@
 import serial
 import time
 import numpy as np
+import os
 import threading
 from collections import deque
 from collections import defaultdict
 from PPG.wristband_listener import DataBuffer
+from ahrs.filters import Madgwick
 
 SAMPLES_PER_PACKAGE = 8
 save_path = r"C:\Users\lhauptmann\Code\WristPPG2\data"
 
+
+
 class DataBuffer:
-    def __init__(self, n_channels=8, frame_rate=128, plotting_window=5, csv_window=2, fileindex=0):
+    def __init__(self, n_channels=8, frame_rate=128, plotting_window=5, csv_window=2, fileindex=0, save_dir = None):
         
         # timestamp = time.strftime("%Y%m%d-%H%M%S")
         # self.filename = f"..//recordings//ppg_data_{timestamp}"
-        self.filename = f'C://Users//lhauptmann//Code//WristPPG2//data//imu_{fileindex:03d}'
+        if not save_dir:
+            self.save_dir = save_path
+        else:
+            self.save_dir = save_dir
+        self.filename = os.path.join(self.save_dir, f"imu_{fileindex:03d}")
 
         self.plotting_winoow = plotting_window
         self.csv_window = csv_window
@@ -22,16 +30,27 @@ class DataBuffer:
 
         self.buffers = [deque(maxlen=int((plotting_window+1)*frame_rate + 1)) for _ in range(n_channels)]
         self.csv_buffers = [deque(maxlen=int((csv_window+1)*frame_rate+1)) for _ in range(n_channels)]
+        self.new_data_buffers = [deque(maxlen=int((plotting_window+1)*frame_rate + 1)) for _ in range(n_channels)]
 
         self.recording = False
         self.n_channels = n_channels
         
         self.dump_thread = None
         self.dump_thread_running = threading.Event()
+        
+        self.new_data_indices = [0] * n_channels  # Tracks where to start fetching new samples
+        self.lock = threading.Lock()  # Lock for thread safety
+        
+        
 
     def add_data(self, qidx, val):
         self.buffers[qidx].append(val)
-        self.csv_buffers[qidx].append(val)
+        self.new_data_buffers[qidx].append(val)
+        
+        if self.recording:
+            self.csv_buffers[qidx].append(val)
+        
+    
 
     def dump_to_txt(self):
         # with open(self.filename, mode='a', newline='') as file:
@@ -90,7 +109,18 @@ class DataBuffer:
 
     def plotting_queues(self):
         return [np.array(self.buffers[i]) for i in range(self.n_channels)]
-
+    
+    def get_new_data(self):
+        with self.lock:
+            new_data = []
+            for i in range(self.n_channels):
+                new_data_channel = []
+                while self.new_data_buffers[i]:
+                    
+                    new_data_channel.append(self.new_data_buffers[i].popleft())
+                new_data.append(np.array(new_data_channel))
+            return new_data
+            
 
     def start_dump_thread(self):
         self.dump_thread_running.set()  # Start the thread
@@ -99,21 +129,20 @@ class DataBuffer:
 
 
     def stop_dump_thread(self):
-        self.dump_thread_running.clear()  # Signal the thread to stop
-        if self.dump_thread:
-            self.dump_thread.join()  # Wait for the thread to finish
+        if self.dump_thread_running.is_set():
+            self.dump_thread_running.clear()  # Signal the thread to stop
+            if self.dump_thread:
+                self.dump_thread.join()  # Wait for the thread to finish
 
 import asyncio
-import serial_asyncio
 from collections import defaultdict
 import time
 import threading
 
 class BluetoothIMUReader:
-    def __init__(self, port, baud_rate, save_file="data.csv", file_index=0, frame_rate=112.2):
+    def __init__(self, port, baud_rate, file_index=0, frame_rate=112.2):
         self.port = port
         self.baud_rate = baud_rate
-        self.save_file = save_file
         self.ser = serial.Serial(self.port, self.baud_rate)
         self.received_data = []
         self.packages = [-1]
@@ -212,6 +241,13 @@ class BluetoothIMUReader:
                 return None
             elif isinstance(data, str):
                 print("[IMU]:", data)
+                
+                if "Enter S to start data transmission" in data:
+                    print("[IMU]: Connection lost. Reconnecting...")
+                    self.running = False
+                    await self.init_connection()
+                    self.running = True
+                
                 return None
 
             # Process sensor data
@@ -244,7 +280,8 @@ class BluetoothIMUReader:
         self.threads = [async_thread]
         
         # Start the data dump thread
-        self.data_buffer.start_dump_thread()
+        if self.file_index != -1:
+            self.data_buffer.start_dump_thread()
         
 
         print("[IMU]: Async IMU reading thread started.")
@@ -273,7 +310,7 @@ class BluetoothIMUReader:
         return acc / acc_lsb_div * 9.81
 
     def process_gyro(self, gyro):
-        gyro_lsb_div = 32 # since gyro range is 1024 deg/s now
+        gyro_lsb_div = 64 # since gyro range is 1024 deg/s now
         return gyro / gyro_lsb_div
 
          
@@ -315,7 +352,7 @@ class BluetoothIMUReader:
 if __name__ == "__main__":
     bluetooth_port = 'COM6'  # Change this to the actual port
     baud_rate = 115200
-    imu_reader = BluetoothIMUReader('COM6', 115200, save_file='imu_data.csv')
+    imu_reader = BluetoothIMUReader('COM6', 115200)
     try:
         
         imu_reader.start_threads()  # Start the data reading thread

@@ -6,6 +6,7 @@ os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 import matplotlib
 matplotlib.use('Agg')
 from PPG.wristband_listener import *
+from causal_filters import *
 from IMU.BluetoothIMU import BluetoothIMUReader
 from flask import Flask, jsonify
 from flask_cors import CORS
@@ -15,10 +16,8 @@ import numpy as np
 import argparse
 import signal
 import time
-import pickle
 from scipy.signal import correlate, correlation_lags
-from datetime import datetime
-import logging
+
 from GestureFiltering import GestureFilteringHMM
 
 import torch
@@ -27,11 +26,9 @@ import yaml
 import sys
 import glob
 import os
-from colorama import Fore, Style
-from datetime import datetime
-import logging
 sys.path.append(r"C:\Users\lhauptmann\Code\GestureDetection")
 import matplotlib.pyplot as plt
+from ahrs.common import Quaternion
 
 
     
@@ -104,6 +101,10 @@ def probability_mapping(probability:np.array, n_classes = n_classes, mapping = {
     return new_prob
     
     
+def pretty_print_matrix(m:np.array):
+    for i in range(m.shape[0]):
+        print(" ".join([f"{el:.2f}" for el in m[i]]))
+    
 
 #%%
 
@@ -122,50 +123,6 @@ calibration_status = False
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 stop_event = threading.Event()
-
-class PredictionFilter:
-    def __init__(self, n_classes=7, log_to_file=False):
-        self.current_gesture = 0
-        self.current_certainty = 0
-        self.current_max_certainty = 0
-        self.current_probabilities = np.zeros(n_classes)
-        self.current_printed = False
-        self.log_to_file = log_to_file  # Option to log to a file
-    
-    def update(self, probabilities):
-        gesture = np.argmax(probabilities)
-        certainty = probabilities[gesture]
-
-        if gesture == self.current_gesture and certainty > self.current_certainty:
-            self.current_max_certainty = certainty
-        
-        if gesture != self.current_gesture:
-            self.print_prediction(self.current_gesture, self.current_max_certainty)
-            self.current_printed = False
-
-        self.current_gesture = gesture
-        self.current_certainty = certainty
-        self.current_probabilities = probabilities
-        return gesture
-
-    def print_prediction(self, gesture, certainty, threshold = 0.5):
-        if certainty > threshold and gesture != 0:
-            # Prepare the message
-            time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            message = (
-                f"{Fore.CYAN}[{time}]{Style.RESET_ALL} "
-                f"{Fore.GREEN}Gesture: {LABEL_TO_GESTURE[gesture]}{Style.RESET_ALL}, "
-                f"Certainty: {Fore.YELLOW}{certainty * 100:.1f}%{Style.RESET_ALL}"
-            )
-            # Print to console
-            print("=" * 40)
-            print(message)
-            print("=" * 40)
-
-            # Log to file if enabled
-            if self.log_to_file:
-                logging.info(f"Gesture: {LABEL_TO_GESTURE[gesture]}, Certainty: {certainty * 100:.1f}%")
-    
 
 def get_correlation_lag(x,y):
     correlation = correlate(x, y, mode="full")
@@ -232,8 +189,13 @@ def prepare_data(imu_data = None, ppg_data = None, window_size = 150):
         lag = min(max(lag, -100), 0)
 
     if ppg_data is not None:
-        latest_window_ppg = ppg_data[:window_size,:]
-    latest_window_imu = imu_data[-lag:-lag+window_size,:]
+        latest_window_ppg = ppg_data[-window_size:,:]
+    #latest_window_imu = imu_data[-lag:-lag+window_size,:]
+    if lag < 0:
+        latest_window_imu = imu_data[-window_size-lag:-lag,:]
+    else:
+        latest_window_imu = imu_data[-window_size:,:]
+
     
     if ppg_data is not None and not (latest_window_ppg.shape[0] == latest_window_imu.shape[0] == window_size):
         print(f"Shapes do not match: {latest_window_ppg.shape[0]} {latest_window_imu.shape[0]}")
@@ -265,7 +227,8 @@ def init_react_app():
         "imu_data": [],
         "gesture": "No Gesture",
         "confidence": 0,
-        "probability": [0] * (n_classes - 1)
+        "probability": [0] * (n_classes),
+        "filtered_gesture": "No Gesture",
     }
 
     @app.route('/data')
@@ -273,18 +236,55 @@ def init_react_app():
         return jsonify(latest_data)
 
     
-    def update_latest_data(imu_data, gesture, confidence, probability=None):
-        # Convert numpy arrays to JSON-serializable lists of dicts
+    def update_latest_data(imu_data, gesture, confidence, probability=None, filtered_gesture=None, orientation:np.array=None, rotation=None):
+        # Convert numpy arrays to JSON-serializable data
         if isinstance(imu_data, np.ndarray):
-            imu_data = [{"accelX": row[0], "accelY": row[1], "accelZ": row[2], 
-                        "gyroX": row[3], "gyroY": row[4], "gyroZ": row[5]} for row in imu_data]
-        latest_data["imu_data"] = imu_data
+            imu_data_list = []
+            for i, row in enumerate(imu_data):
+                data_point = {
+                    "accelX": row[0], 
+                    "accelY": row[1], 
+                    "accelZ": row[2],
+                    "gyroX": row[3], 
+                    "gyroY": row[4], 
+                    "gyroZ": row[5],
+                    "orientation": {} # Default empty orientation
+                }
+                
+                # Add orientation data if available
+                if orientation is not None and len(orientation) > i:
+                    orientation_angles = Quaternion(orientation[i]).to_angles()
+                    data_point["orientation"] = {
+                        "yaw": orientation_angles[0] / np.pi * 180,
+                        "pitch": orientation_angles[1]/ np.pi * 180,
+                        "roll": orientation_angles[2]/ np.pi * 180
+                    }
+                    
+                imu_data_list.append(data_point)
+                
+            latest_data["imu_data"] = imu_data_list
+            
         latest_data["gesture"] = gesture
         latest_data["confidence"] = float(confidence) * 100
+        
+        if rotation is not None:
+            
+            latest_data["rotation"] = rotation
+            
+        if filtered_gesture is not None:
+            if filtered_gesture != "Nothing":
+                print(filtered_gesture)
+            latest_data["filtered_gesture"] = filtered_gesture
+        
         if probability is not None:
-            latest_data["probabilities"] = [{"name": LABEL_TO_GESTURE[i], "probability": float(probability[i])*100} for i in range(n_classes - 1)]
-            #print(latest_data["probabilities"])
+            latest_data["probabilities"] = [
+                {"name": LABEL_TO_GESTURE[i], "probability": float(probability[i])*100} 
+                for i in range(len(probability))
+            ]
 
+        #print(latest_data)
+
+        #print(latest_data)
     threading.Thread(target=lambda: app.run(port=5000, debug=False), daemon=True).start()
     
     return update_latest_data
@@ -306,10 +306,10 @@ if __name__ == '__main__':
     # Register the signal handler
     signal.signal(signal.SIGINT, signal_handler)
    
-
+    inference_period = 32/112.2
     wristband_listner = WristbandListener(n_ppg_channels=N_PPG_CHANNELS, window_size=WLEN, csv_window=2,
-                                     frame_rate=FRAME_RATE_PPG, fileindex=args.file_index, bracelet=args.sensor_size)
-    imu_listener = BluetoothIMUReader(port = 'COM6', baud_rate=115200, file_index=args.file_index, frame_rate=FRAME_RATE_IMU)
+                                     frame_rate=FRAME_RATE_PPG, fileindex=-1, bracelet=args.sensor_size)
+    imu_listener = BluetoothIMUReader(port = 'COM6', baud_rate=115200, file_index=-1, frame_rate=FRAME_RATE_IMU)
 
     
     #wristband_listner.start_threads()
@@ -318,35 +318,52 @@ if __name__ == '__main__':
     model_path = r"C:\Users\lhauptmann\Code\GestureDetection\experiments\2025-01-17_111553"
     model = load_model(model_path)
     
-    filter = GestureFilteringHMM(n_classes, start_neg_prob=0.5, trans_self_prob=0.9, emit_self_prob=0.9)
+    trans_self_prob = 0.9
+    filter = GestureFilteringHMM(n_classes, start_neg_prob=0.5, trans_self_prob=trans_self_prob, emit_self_prob=0.9)
+    rotation_filter = RotationFilter(track_rotation_index=8, probability_threshold=0.2, inference_interval=inference_period)
 
     # 8 is the Rotation state, 5 is the Pinch Close state, 6 is the Pinch Open state
     # It is not possibel to got to 8 from any state but 5 and 8
-    filter.trans_prob[8,:] = 0
+    filter.trans_prob[8, :6] = 0
+    filter.trans_prob[8, 7:] = 0
     # you can only transition to 6 from 5 and 8
-    filter.trans_prob[6,:] = 0
-    # from state 5 you can eithet go to 6 or 8
-    filter.trans_prob[:,5] = [0, 0, 0, 0, 0, 0, 0.2, 0, 0.8]
-    # from state 8 you can eithet go to 5 or 6
-    filter.trans_prob[:,8] = [0, 0, 0, 0, 0, 0, 0.5, 0, 0.5]
+    #filter.trans_prob[6, :] = 0
+    #filter.trans_prob[6, 6] = trans_self_prob
+    # from state 5 you can either go to 5 or 8
+    filter.trans_prob[:, 5] = [0, 0, 0, 0, 0, trans_self_prob, 0, 0, 1 -trans_self_prob]
+    # from state 8 you can eithet go to 8 or 6
+    filter.trans_prob[:, 8] = [0, 0, 0, 0, 0, 0, 0.02, 0, 0.98]
 
     
     # normalize
-    filter.trans_prob = filter.trans_prob / filter.trans_prob.sum(axis=1, keepdims=True)
+    filter.trans_prob = filter.trans_prob / filter.trans_prob.sum(axis=0, keepdims=True)
     
-    # 8 is never emitted, but it's possible to observe 0 when in state 8
-    filter.emit_prob[0,:] = [0.45, 1/70, 1/70, 1/70, 1/70, 1/70, 1/70, 1/70, 0.45]
-    
-    prediction_filter = PredictionFilter(n_classes=n_classes-1)
-  
-    update_latest_data = init_react_app()
 
     
+    print("Transition matrix:")
+    pretty_print_matrix(filter.trans_prob)
+    
+    # 8 is never emitted, but it's possible to observe 0 when in state 8
+    
+    filter.emit_prob[0,8] += filter.emit_prob[8,8]
+    filter.emit_prob[8,8] = 0
+    print("\nEmission matrix:")
+    pretty_print_matrix(filter.emit_prob)
+    
+    
+    prediction_filter = PredictionFilter(n_classes=n_classes-1, label_to_gesture=LABEL_TO_GESTURE)
+    orientation_filter = MadgwickRotationFilter(sampling_frequency=112.2, history_size=800, filter_gyro=False)
+  
+    update_latest_data = init_react_app()
+    highpassfilter = HighPassFilter(cutoff_frequency=0.5, sampling_rate=112.2, num_channels=3, order=3)
+    
     started_inference = False
-    inference_period = 0.01
+    
     last_inf_time = time.time()
     
+    window_size = 150
     
+    imu_queue = deque(maxlen=800)
     
     
     try:
@@ -357,16 +374,27 @@ if __name__ == '__main__':
             
             #ppg_data = wristband_listner.data_buffer.plotting_queues()
             #ppg_data = None
-            imu_data = imu_listener.data_buffer.plotting_queues()
+            
+            new_imu_data = np.array(imu_listener.data_buffer.get_new_data()[:-2]).T
+            if new_imu_data.shape[0] != 0:
+                imu_queue.extend(new_imu_data)
+                heuristic_gyro_offset = np.array([10.7,-9,2.7])
+                new_imu_data[:,3:] = new_imu_data[:,3:] - heuristic_gyro_offset
+                orientation_filter.update_imu_values(new_imu_data)
+                
+            
+            imu_data = np.array(imu_queue)
+            
+            #imu_data = imu_listener.data_buffer.plotting_queues()
+            
 
             #ppg_data_length = min([len(el) for el in ppg_data[:-1]])
 
             #ppg_data = np.array([el[:ppg_data_length] for el in ppg_data[:-1]]).T
 
-            imu_data = np.array(imu_data[:-2]).T
+            #imu_data = np.array(imu_data[:-2]).T
             #if imu_data.shape[0] != 0 or ppg_data.shape[0] != 0:
             #    print(imu_data.shape, ppg_data.shape)
-
 
             if imu_data.shape[0] > 200: #and ppg_data.shape[0] > 200:
                 
@@ -374,7 +402,7 @@ if __name__ == '__main__':
                     print("Started inference")
                     started_inference = True
                 
-                sample = prepare_data(ppg_data = None, imu_data = imu_data)
+                sample = prepare_data(ppg_data = None, imu_data = imu_data, window_size=window_size)
                 if sample is None:
                     continue
             
@@ -386,12 +414,27 @@ if __name__ == '__main__':
                 filtered_output = filter.update(np.append(output, [0]))
                 #print(filtered_output)
                                     
-                pred_gesture = filtered_output.argmax()
+                pred_gesture = output.argmax()
+                pred_gesture_filtered = filtered_output.argmax()
                 #print(pred_gesture, filtered_output)
                 
-                gesture = prediction_filter.update(filtered_output)
+                filtered_gesture = prediction_filter.update(filtered_output)
                 
-                update_latest_data(imu_data, LABEL_TO_GESTURE[pred_gesture], filtered_output[pred_gesture], filtered_output)
+                #orientation_history = np.array(orientation_filter.get_rotation_history())
+                #if len(orientation_history) > 0:
+                #    print(orientation_history)
+                delta_rotation = rotation_filter.update(filtered_output, orientation_filter.get_current_rotation())
+                update_latest_data(
+                    imu_data, 
+                    LABEL_TO_GESTURE[pred_gesture_filtered], 
+                    filtered_output[pred_gesture_filtered], 
+                    probability = filtered_output, 
+                    filtered_gesture = LABEL_TO_GESTURE[filtered_gesture], 
+                    orientation = np.array(orientation_filter.get_rotation_history()),
+                    rotation = delta_rotation
+                    )
+                #update_latest_data(imu_data, LABEL_TO_GESTURE[pred_gesture], output[pred_gesture], output)
+                
                     
                     
             else:
