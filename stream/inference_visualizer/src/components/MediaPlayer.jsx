@@ -85,6 +85,8 @@ const MediaPlayer = ({ currentGesture, rotation }) => {
   const lastGesture = useRef(null);
   const audioRef = useRef(null);
 
+
+  
   useEffect(() => {
     audioRef.current = new Audio(songs[currentSongIndex].url);
     audioRef.current.addEventListener('loadedmetadata', () => {
@@ -127,8 +129,42 @@ const MediaPlayer = ({ currentGesture, rotation }) => {
   }, [currentGesture]);
 
   useEffect(() => {
+    const handleKeyDown = (event) => {
+      switch (event.code) {
+        case "Space": // Play/Pause
+          event.preventDefault(); // Prevents scrolling when pressing space
+          handlePlayPause();
+          break;
+        case "ArrowRight": // Next song
+          handleNext();
+          break;
+        case "ArrowLeft": // Previous song
+          handlePrevious();
+          break;
+        case "ArrowUp": // Increase volume
+          handleVolumeAdjust(Math.min(volume + 10, 100));
+          break;
+        case "ArrowDown": // Decrease volume
+          handleVolumeAdjust(Math.max(volume - 10, 0));
+          break;
+        case "KeyM": // Mute/Unmute
+          handleMuteToggle();
+          break;
+        default:
+          break;
+      }
+    };
+  
+    window.addEventListener("keydown", handleKeyDown);
+    
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isPlaying, volume]); // Dependencies to ensure updates
+
+  useEffect(() => {
     if (rotation !== undefined && rotation !== 0) {     
-      const volumeChange = (rotation / 3.6);
+      const volumeChange = (rotation / 3.6 * 3);
       handleVolumeAdjust(Math.min(Math.max(volume + volumeChange, 0), 100));
     }
   }, [rotation]);
