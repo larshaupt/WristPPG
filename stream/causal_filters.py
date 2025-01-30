@@ -69,6 +69,101 @@ def quaternion_multiply(q1, q2):
     
     return np.array([w, x, y, z])
 
+
+class RCSFilter():
+    def __init__(self, decay=1.6):
+        self.decay = decay
+        self.prev_rcs = None
+        self.prev_rs = None
+    
+    def update(self, sample):
+        sample = sample.squeeze()
+        assert sample.ndim == 1 # (n_channels)
+        
+        if self.prev_rs is None:
+            RS_sum = 0
+            
+        else:
+            RS_sum = np.abs(self.prev_rs - sample).sum()
+    
+        if self.prev_rcs is None:
+            RCS = RS_sum
+        else:
+            RCS = self.prev_rcs/self.decay + RS_sum
+        
+        self.prev_rcs = RCS
+        self.prev_rs = sample
+        
+        return RCS
+        
+    def update_batch(self, batch):
+        results = []
+        assert batch.ndim == 2 # (n_samples, n_channels)
+        for sample in batch:
+            RSC = self.update(sample)
+            results.append(RSC)
+        return results
+
+
+class RCSEventFilter():
+    def __init__(self, threshold=2, n_samples_peak = 20, n_samples_reset=40, save_RCS = False):
+        self.threshold = threshold
+        self.n_samples_peak = n_samples_peak
+        self.n_samples_rest = n_samples_reset
+        self.n_samples_since_threshold = 0
+        
+        self.current_event_detected = False
+        self.events = []
+        
+        self.current_event_peak = None
+        self.iter = 0
+        self.save_RCS = save_RCS
+        if self.save_RCS:
+            self.RCS_history = []
+        self.RCS_filter = RCSFilter()
+        
+    def update(self, sample):
+        
+
+        rcs_value = self.RCS_filter.update(sample)
+        if self.save_RCS:
+            self.RCS_history.append(rcs_value)
+        
+        
+        if not self.current_event_detected:
+            if rcs_value > self.threshold:
+                self.current_event_detected = True
+                self.current_event_peak = [self.iter, rcs_value]
+        else:
+            
+            self.n_samples_since_threshold += 1
+            
+            if self.n_samples_since_threshold < self.n_samples_peak:
+                if rcs_value >= self.current_event_peak[1]:
+                    self.current_event_peak = [self.iter, rcs_value]
+            
+            elif self.n_samples_since_threshold == self.n_samples_peak:
+                
+                self.events.append(self.current_event_peak)
+                self.iter += 1       
+                return self.current_event_peak
+                
+            elif self.n_samples_since_threshold > self.n_samples_rest:
+                self.current_event_detected = False
+                self.n_samples_since_threshold = 0
+                self.current_event_peak = None
+                
+        self.iter += 1       
+
+    
+    def update_batch(self, batch):
+        results = []
+        for i, sample in enumerate(batch):
+            event = self.update(sample)
+            if event is not None:
+                results.append(event[0] - self.iter + len(batch))
+        return results
+
 class FirstOrderHighPassFilter:
     def __init__(self, cutoff_frequency, sampling_rate, num_channels=1):
         """
@@ -283,14 +378,108 @@ class MadgwickRotationFilter:
         return list(self.rotation_history)  # Return history as a list for easier manipulation
 
 
+class EventPredictionFilter:
+    def __init__(self, label_to_gesture=None, probability_threshold=0.8):
+        self.delayed_event = 0
+        self.label_to_gesture = label_to_gesture
+        self.probability_threshold = probability_threshold
+    def update(self, probabilities, events=None):
+        prediction = np.argmax(probabilities) 
+        certainty = probabilities[prediction]
+        if certainty < self.probability_threshold:
+            prediction = 0
+            certainty = 0
+        
+        
+        if events:
+            for _ in events:
+                if prediction != 0:
+                    self.delayed_event = 0
+                    self.print_prediction(prediction, certainty)
+                    return prediction
+                else:
+                    self.delayed_event = 1
+                
+        else:
+            if self.delayed_event > 0 and self.delayed_event <= 3:
+            
+                if prediction == 0:
+                    self.delayed_event += 1
+                else:
+                    self.print_prediction(prediction, certainty)
+                    self.delayed_event = 0
+                    return prediction
+                
+            elif self.delayed_event == 3:
+                self.delayed_event = 0
+                
+        return 0
+
+    
+    def print_prediction(self, gesture, certainty):
+
+        # Prepare the message
+        time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        message = (
+            f"{Fore.CYAN}[{time}]{Style.RESET_ALL} "
+            f"{Fore.GREEN}Gesture: {self.label_to_gesture[gesture]}{Style.RESET_ALL}, "
+            f"Certainty: {Fore.YELLOW}{certainty * 100:.1f}%{Style.RESET_ALL}"
+        )
+        # Print to console
+        print("=" * 40)
+        print(message)
+        print("=" * 40)
+
+class SimplePredictionFilter:
+    def __init__(self, prob_threshold=0.9, label_to_gesture=None):
+        
+        self.negative_class = 0
+        self.last_prediction = self.negative_class
+        self.prob_threshold = prob_threshold
+        
+        if label_to_gesture is None:
+            self.label_to_gesture = lambda x: x
+        else:
+            self.label_to_gesture = label_to_gesture
+        
+    def update(self, probabilities, events=None):
+        prediction = np.argmax(probabilities) 
+        certainty = probabilities[prediction]
+        
+        if certainty < self.prob_threshold:
+            prediction = self.negative_class
+            certainty = 0
+
+        if prediction != self.last_prediction and prediction != self.negative_class:
+            self.last_prediction = prediction
+            self.print_prediction(prediction, certainty)
+            return prediction
+        self.last_prediction = prediction
+        return self.negative_class
+    
+    def print_prediction(self, gesture, certainty):
+
+        # Prepare the message
+        time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        message = (
+            f"{Fore.CYAN}[{time}]{Style.RESET_ALL} "
+            f"{Fore.GREEN}Gesture: {self.label_to_gesture[gesture]}{Style.RESET_ALL}, "
+            f"Certainty: {Fore.YELLOW}{certainty * 100:.1f}%{Style.RESET_ALL}"
+        )
+        # Print to console
+        print("=" * 40)
+        print(message)
+        print("=" * 40)
+
+    
+
 class PredictionFilter:
-    def __init__(self, n_classes=7, log_to_file=False, gesture_prediction_len_threshold = 1, label_to_gesture = None):
+    def __init__(self, n_classes=7, log_to_file=False, gesture_prediction_len_threshold = 1, label_to_gesture = None, entropy_threshold_ratio = 0.5):
         self.current_gesture = 0
         self.current_gesture_length = 0
         self.current_certainty = 0
         self.current_max_certainty = 0
         self.gesture_prediction_len_threshold = gesture_prediction_len_threshold
-        self.current_probabilities = np.zeros(n_classes)
         self.log_to_file = log_to_file  # Option to log to a file
         if label_to_gesture is None:
             self.label_to_gesture = lambda x: x
@@ -298,44 +487,70 @@ class PredictionFilter:
             self.label_to_gesture = label_to_gesture
 
     
-    def update(self, probabilities):
+    def update(self, probabilities, events=None):
+        
         gesture = np.argmax(probabilities)
+        #print(f"Gesture: {gesture}")
         certainty = probabilities[gesture]
 
-        if gesture == self.current_gesture and certainty > self.current_certainty:
-            self.current_max_certainty = certainty
+            
+        output_gesture = None
         
-        if gesture != self.current_gesture:
-            if self.current_gesture_length >= self.gesture_prediction_len_threshold:
-                self.print_prediction(self.current_gesture, self.current_max_certainty)
+        if gesture == self.current_gesture and gesture != 0: # gesture unchanged
+            
+            self.current_max_certainty = max(certainty, self.current_max_certainty)
+            
+            if events:
+                output_gesture = (self.current_gesture, self.current_max_certainty)
                 self.current_gesture_length = 0
-                return gesture
+                self.current_max_certainty = 0
+                self.current_gesture = 0
+            else:
+                output_gesture = None
+                self.current_gesture_length += 1
+            
+
+        else: # gesture changed
+        
+            if self.current_gesture_length >= self.gesture_prediction_len_threshold:
+                output_gesture = (self.current_gesture, self.current_max_certainty)
+                
+            if gesture != 0:
+                self.current_gesture_length = 1
+                self.current_max_certainty = certainty
+                self.current_gesture = gesture
             else:
                 self.current_gesture_length = 0
-        else:
-            self.current_gesture_length += 1
-
-        self.current_gesture = gesture
-        self.current_certainty = certainty
-        self.current_probabilities = probabilities
+                self.current_max_certainty = 0
+                self.current_gesture = 0
+            
         
-        return 0
+        #print(f"Current Gesture: {self.current_gesture}, Current Gesture Length: {self.current_gesture_length}, Current Max Certainty: {self.current_max_certainty}")
+        
+        if output_gesture is not None:
+            self.print_prediction(output_gesture[0], output_gesture[1])               
+            return output_gesture[0]
+        
+        else:
+            return 0
+                
+            
     
     def print_prediction(self, gesture, certainty, threshold = 0.5):
-        if certainty > threshold and gesture != 0:
-            # Prepare the message
-            time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            message = (
-                f"{Fore.CYAN}[{time}]{Style.RESET_ALL} "
-                f"{Fore.GREEN}Gesture: {self.label_to_gesture[gesture]}{Style.RESET_ALL}, "
-                f"Certainty: {Fore.YELLOW}{certainty * 100:.1f}%{Style.RESET_ALL}"
-            )
-            # Print to console
-            print("=" * 40)
-            print(message)
-            print("=" * 40)
 
-            # Log to file if enabled
-            if self.log_to_file:
-                logging.info(f"Gesture: {self.label_to_gesture[gesture]}, Certainty: {certainty * 100:.1f}%")
+        # Prepare the message
+        time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        message = (
+            f"{Fore.CYAN}[{time}]{Style.RESET_ALL} "
+            f"{Fore.GREEN}Gesture: {self.label_to_gesture[gesture]}{Style.RESET_ALL}, "
+            f"Certainty: {Fore.YELLOW}{certainty * 100:.1f}%{Style.RESET_ALL}"
+        )
+        # Print to console
+        print("=" * 40)
+        print(message)
+        print("=" * 40)
+
+        # Log to file if enabled
+        if self.log_to_file:
+            logging.info(f"Gesture: {self.label_to_gesture[gesture]}, Certainty: {certainty * 100:.1f}%")
     

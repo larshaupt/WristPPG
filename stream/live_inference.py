@@ -8,7 +8,7 @@ matplotlib.use('Agg')
 from PPG.wristband_listener import *
 from causal_filters import *
 from IMU.BluetoothIMU import BluetoothIMUReader
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_file
 from flask_cors import CORS
 import threading
 
@@ -234,6 +234,20 @@ def init_react_app():
     @app.route('/data')
     def get_data():
         return jsonify(latest_data)
+    
+    # Add a route for streaming audio files
+    @app.route('/song/<path:filename>')
+    def stream_audio(filename):
+        try:
+            # Adjust this path to where your songs are stored
+            audio_directory = "song_files"  
+            return send_file(
+                os.path.join(audio_directory, filename),
+                mimetype="audio/mpeg"
+            )
+        except Exception as e:
+            return str(e), 404
+
 
     
     def update_latest_data(imu_data, gesture, confidence, probability=None, filtered_gesture=None, orientation:np.array=None, rotation=None):
@@ -272,8 +286,6 @@ def init_react_app():
             latest_data["rotation"] = rotation
             
         if filtered_gesture is not None:
-            if filtered_gesture != "Nothing":
-                print(filtered_gesture)
             latest_data["filtered_gesture"] = filtered_gesture
         
         if probability is not None:
@@ -285,7 +297,7 @@ def init_react_app():
         #print(latest_data)
 
         #print(latest_data)
-    threading.Thread(target=lambda: app.run(port=5000, debug=False), daemon=True).start()
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000, debug=False), daemon=True).start()
     
     return update_latest_data
 
@@ -327,13 +339,15 @@ if __name__ == '__main__':
     filter.trans_prob[8, :6] = 0
     filter.trans_prob[8, 7:] = 0
     # you can only transition to 6 from 5 and 8
-    #filter.trans_prob[6, :] = 0
-    #filter.trans_prob[6, 6] = trans_self_prob
+    filter.trans_prob[6, :] = 0
+    filter.trans_prob[6, 6] = trans_self_prob
     # from state 5 you can either go to 5 or 8
     filter.trans_prob[:, 5] = [0, 0, 0, 0, 0, trans_self_prob, 0, 0, 1 -trans_self_prob]
     # from state 8 you can eithet go to 8 or 6
     filter.trans_prob[:, 8] = [0, 0, 0, 0, 0, 0, 0.02, 0, 0.98]
 
+
+    filter.trans_prob += 0.001
     
     # normalize
     filter.trans_prob = filter.trans_prob / filter.trans_prob.sum(axis=0, keepdims=True)
@@ -351,8 +365,12 @@ if __name__ == '__main__':
     pretty_print_matrix(filter.emit_prob)
     
     
-    prediction_filter = PredictionFilter(n_classes=n_classes-1, label_to_gesture=LABEL_TO_GESTURE)
+    #prediction_filter = PredictionFilter(n_classes=n_classes-1, label_to_gesture=LABEL_TO_GESTURE, gesture_prediction_len_threshold=2)
+    #prediction_filter = SimplePredictionFilter(label_to_gesture=LABEL_TO_GESTURE)
+    prediction_filter = EventPredictionFilter(label_to_gesture=LABEL_TO_GESTURE)
     orientation_filter = MadgwickRotationFilter(sampling_frequency=112.2, history_size=800, filter_gyro=False)
+    
+    event_filter = RCSEventFilter(threshold=2, n_samples_peak=50, n_samples_reset = 70)
   
     update_latest_data = init_react_app()
     highpassfilter = HighPassFilter(cutoff_frequency=0.5, sampling_rate=112.2, num_channels=3, order=3)
@@ -376,11 +394,15 @@ if __name__ == '__main__':
             #ppg_data = None
             
             new_imu_data = np.array(imu_listener.data_buffer.get_new_data()[:-2]).T
+            time_start = time.time()
             if new_imu_data.shape[0] != 0:
                 imu_queue.extend(new_imu_data)
                 heuristic_gyro_offset = np.array([10.7,-9,2.7])
                 new_imu_data[:,3:] = new_imu_data[:,3:] - heuristic_gyro_offset
                 orientation_filter.update_imu_values(new_imu_data)
+                events = event_filter.update_batch(new_imu_data[:,:3])
+                #if len(events) > 0:
+                #    print(events)
                 
             
             imu_data = np.array(imu_queue)
@@ -411,6 +433,7 @@ if __name__ == '__main__':
                     output = torch.nn.functional.softmax(output, dim=1).squeeze().numpy()
                     output = probability_mapping(output)
                     
+                    
                 filtered_output = filter.update(np.append(output, [0]))
                 #print(filtered_output)
                                     
@@ -418,7 +441,7 @@ if __name__ == '__main__':
                 pred_gesture_filtered = filtered_output.argmax()
                 #print(pred_gesture, filtered_output)
                 
-                filtered_gesture = prediction_filter.update(filtered_output)
+                filtered_gesture = prediction_filter.update(filtered_output, events)
                 
                 #orientation_history = np.array(orientation_filter.get_rotation_history())
                 #if len(orientation_history) > 0:
@@ -435,7 +458,7 @@ if __name__ == '__main__':
                     )
                 #update_latest_data(imu_data, LABEL_TO_GESTURE[pred_gesture], output[pred_gesture], output)
                 
-                    
+                #print(f"Time: {time.time() - start_time:.6f}")      
                     
             else:
                 

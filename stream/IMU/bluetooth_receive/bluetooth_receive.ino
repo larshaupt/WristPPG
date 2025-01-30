@@ -7,8 +7,8 @@
 #include <BLEAdvertisedDevice.h>
 #include "QMI8658.h"
 
-#define TARGET_DEVICE_ADDRESS "7c:df:a1:ed:61:55" 
-//#define TARGET_DEVICE_ADDRESS "7c:df:a1:ed:60:11"
+//#define TARGET_DEVICE_ADDRESS "7c:df:a1:ed:61:55" 
+#define TARGET_DEVICE_ADDRESS "7c:df:a1:ed:60:11"
 #define SERVICE_UUID "12345678-1234-1234-1234-123456789012"  // Replace with your service UUID
 #define CHARACTERISTIC_UUID "12345678-1234-1234-1234-123456789013"  // Replace with your characteristic UUID
 #define SAMPLES_PER_PACKAGE 32
