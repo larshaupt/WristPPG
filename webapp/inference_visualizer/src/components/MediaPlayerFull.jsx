@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import MediaPlayer from './MediaPlayer';
 
-const SERVER_IP = '129.132.75.227'; // Replace with your known IP address
+const SERVER_IP = ''; // Replace with your known IP address
 
 const FullscreenPlayer = () => {
   const [currentGesture, setCurrentGesture] = useState("No Gesture");

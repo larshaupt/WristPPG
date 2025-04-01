@@ -11,7 +11,7 @@ import ProbabilityHistoryChart from './charts/ProbabilityHistoryChart';
 import AccelerometerChart from './charts/AccelerometerChart';
 import GyroscopeChart from './charts/GyroscopeChart';
 import OrientationChart from './charts/OrientationChart';
-const SERVER_IP = '129.132.75.227'; // Replace with your known IP address
+const SERVER_IP = ''; // Replace with your known IP address
 const LiveSignalViewer = () => {
     const [data, setData] = useState([]);
     const [currentGesture, setCurrentGesture] = useState("No Gesture");
