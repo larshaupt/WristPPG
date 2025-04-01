@@ -9,3 +9,4 @@
 *.pyc
 fonts/
 *.pdf
+*.pkl
