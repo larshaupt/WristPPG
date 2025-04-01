@@ -11,7 +11,7 @@ import ProbabilityHistoryChart from './charts/ProbabilityHistoryChart';
 import AccelerometerChart from './charts/AccelerometerChart';
 import GyroscopeChart from './charts/GyroscopeChart';
 import OrientationChart from './charts/OrientationChart';
-
+const SERVER_IP = '129.132.75.227'; // Replace with your known IP address
 const LiveSignalViewer = () => {
     const [data, setData] = useState([]);
     const [currentGesture, setCurrentGesture] = useState("No Gesture");
@@ -35,7 +35,7 @@ const LiveSignalViewer = () => {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const response = await fetch('http://localhost:5000/data');
+                const response = await fetch(`http://${SERVER_IP}:5000/data`);
                 const newData = await response.json();
                 console.log('API Response:', newData); // Log full API response
                 
@@ -78,34 +78,16 @@ const LiveSignalViewer = () => {
 
     return (
         <div className="w-full p-4 space-y-4">
-            <div className="flex flex-row gap-4">
-                <GestureDisplay 
-                    currentGesture={currentGesture} 
-                    confidence={confidence} 
-                />
-                <Card className="basis-1/4">
-                    <RotaryController rotation={rotation} />
-                </Card>
-                <ProbabilityChart 
-                    data={probabilities}
-                    isVisible={visiblePanels.currentProbabilities}
-                    onToggle={() => togglePanel('currentProbabilities')}
-                />
-            </div>
 
-            <ProbabilityHistoryChart 
-                data={probabilityHistory}
-                probabilities={probabilities}
-                isVisible={visiblePanels.probabilityHistory}
-                onToggle={() => togglePanel('probabilityHistory')}
+
+            <ProbabilityChart 
+                data={probabilities}
+                isVisible={visiblePanels.currentProbabilities}
+                onToggle={() => togglePanel('currentProbabilities')}
             />
 
-            <MediaPlayerPanel 
-                isVisible={visiblePanels.mediaPlayer}
-                onToggle={() => togglePanel('mediaPlayer')}
-                currentGesture={currentGesture}
-                rotation={rotation}
-            />
+
+
 
             <AccelerometerChart 
                 data={data}
@@ -119,11 +101,6 @@ const LiveSignalViewer = () => {
                 onToggle={() => togglePanel('gyroscope')}
             />
 
-            <OrientationChart 
-                data={data}
-                isVisible={visiblePanels.orientation}
-                onToggle={() => togglePanel('orientation')}
-            />
         </div>
     );
 };

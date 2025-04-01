@@ -1,4 +1,3 @@
-// components/charts/ProbabilityChart.jsx
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Minimize2, Maximize2 } from "lucide-react";
@@ -6,7 +5,7 @@ import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Toolti
 
 const ProbabilityChart = ({ data, isVisible, onToggle }) => {
   return (
-    <Card className="basis-2/4">
+    <Card className="basis-3/4">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle>Class Probabilities</CardTitle>
         <Button 
@@ -19,11 +18,11 @@ const ProbabilityChart = ({ data, isVisible, onToggle }) => {
       </CardHeader>
       {isVisible && (
         <CardContent>
-          <div className="h-48">
+          <div className="h-96">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart 
                 data={data}
-                margin={{ top: 5, right: 30, left: 20, bottom: 50 }}
+                margin={{ top: 10, right: 20, left: 20, bottom: 60 }}
               >
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis 
@@ -32,11 +31,11 @@ const ProbabilityChart = ({ data, isVisible, onToggle }) => {
                   textAnchor="end"
                   height={60}
                   interval={0}
-                  fontSize={12}
+                  fontSize={20}
                 />
                 <YAxis 
                   domain={[0, 100]}
-                  fontSize={12}
+                  fontSize={20}
                 />
                 <Tooltip />
                 <Bar dataKey="probability" fill="#8884d8" />

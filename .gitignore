@@ -7,3 +7,5 @@
 *.7z
 *.mp4
 *.pyc
+fonts/
+*.pdf

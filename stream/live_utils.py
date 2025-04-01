@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import numpy as np
 from mutagen import File  # You'll need to install mutagen: pip install mutagen
 def get_songs_metadata():
     songs = []
@@ -55,3 +56,38 @@ def get_songs_metadata():
                 })
     
     return songs
+
+
+
+import keyboard  # You'll need to pip install keyboard
+
+# Add at the beginning of the script, with other global variables
+keyboard_mode = False  # Global flag to switch between keyboard and model modes
+
+def handle_keyboard_input():
+    """Handle keyboard input and return corresponding gesture data"""
+    # Map keys to gestures
+    key_to_gesture = {
+        'w': ('Swipe Forward', 1),      # a
+        's': ('Swipe Backward', 2),     # b
+        'a': ('Swipe Left', 3),         # c
+        'd': ('Swipe Right', 4),        # d
+        'q': ('Pinch Close', 5),        # pc
+        'e': ('Pinch Open', 6),         # po
+        'r': ('Side Tap', 7),           # sp
+        't': ('Rotate', 8),             # pr
+        'space': ('Nothing', 0),        # o
+    }
+    
+    # Check each key and return the first pressed key's gesture
+    for key, (gesture_name, gesture_id) in key_to_gesture.items():
+        if keyboard.is_pressed(key):
+            # Create a probability array with 1.0 for the pressed gesture
+            probability = np.zeros(9)
+            probability[gesture_id] = 1.0
+            return gesture_name, 1.0, probability, gesture_name
+            
+    # If no key is pressed, return "Nothing"
+    probability = np.zeros(9)
+    probability[0] = 1.0
+    return "Nothing", 1.0, probability, "Nothing"

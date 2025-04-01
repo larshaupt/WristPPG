@@ -331,7 +331,7 @@ if __name__ == '__main__':
     model = load_model(model_path)
     
     trans_self_prob = 0.9
-    filter = GestureFilteringHMM(n_classes, start_neg_prob=0.5, trans_self_prob=trans_self_prob, emit_self_prob=0.9)
+    filter = GestureFilteringHMM(n_classes, start_neg_prob=0.5, trans_self_prob=trans_self_prob, emit_self_prob=0.8)
     rotation_filter = RotationFilter(track_rotation_index=8, probability_threshold=0.2, inference_interval=inference_period)
 
     # 8 is the Rotation state, 5 is the Pinch Close state, 6 is the Pinch Open state
@@ -342,9 +342,9 @@ if __name__ == '__main__':
     filter.trans_prob[6, :] = 0
     filter.trans_prob[6, 6] = trans_self_prob
     # from state 5 you can either go to 5 or 8
-    filter.trans_prob[:, 5] = [0, 0, 0, 0, 0, trans_self_prob, 0, 0, 1 -trans_self_prob]
+    filter.trans_prob[:, 5] = [0, 0, 0, 0, 0, trans_self_prob, (1 -trans_self_prob)/2, 0, (1 -trans_self_prob)/2]
     # from state 8 you can eithet go to 8 or 6
-    filter.trans_prob[:, 8] = [0, 0, 0, 0, 0, 0, 0.02, 0, 0.98]
+    filter.trans_prob[:, 8] = [0, 0, 0, 0, 0, 0, 1- trans_self_prob, 0, trans_self_prob]
 
 
     filter.trans_prob += 0.001
@@ -397,7 +397,7 @@ if __name__ == '__main__':
             time_start = time.time()
             if new_imu_data.shape[0] != 0:
                 imu_queue.extend(new_imu_data)
-                heuristic_gyro_offset = np.array([10.7,-9,2.7])
+                heuristic_gyro_offset = np.array([0,0,0])#np.array([10.7,-9,2.7])
                 new_imu_data[:,3:] = new_imu_data[:,3:] - heuristic_gyro_offset
                 orientation_filter.update_imu_values(new_imu_data)
                 events = event_filter.update_batch(new_imu_data[:,:3])

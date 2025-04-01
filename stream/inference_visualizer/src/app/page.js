@@ -4,7 +4,7 @@ import MediaPlayerFull from '@/components/MediaPlayerFull';
 export default function Home() {
   return (
     <main>
-      <MediaPlayerFull />
+      <LiveSignalViewer />
     </main>
   );
 }
