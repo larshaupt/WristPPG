@@ -8,7 +8,6 @@
 *.mp4
 *.pyc
 fonts/
-*.pdf
 *.pkl
-
+.vscode/
 data/
